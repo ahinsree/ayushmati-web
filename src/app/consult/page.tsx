@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
-import { CalendarCheck } from "lucide-react";
-import { BookingWidget } from "@/components/chat/BookingWidget";
-import { PRACTITIONERS, SPECIALTY_LABELS, getOpenSlots, getPractitioner } from "@/lib/consultations";
-import { formatINR, formatSlotDay, formatSlotTime } from "@/lib/format";
+import { Suspense } from "react";
+import { ConsultBooking, ConsultBookingSkeleton } from "@/components/consult/ConsultBooking";
+import { PRACTITIONERS, SPECIALTY_LABELS } from "@/lib/consultations";
+import { formatINR } from "@/lib/format";
 
 export const metadata: Metadata = {
   title: "Online Ayurvedic Consultations",
@@ -10,17 +10,7 @@ export const metadata: Metadata = {
   alternates: { canonical: "/consult" },
 };
 
-// Slots depend on the current time, so render on each request.
-export const dynamic = "force-dynamic";
-
-export default async function ConsultPage({ searchParams }: PageProps<"/consult">) {
-  const { practitioner: practitionerId, slot } = await searchParams;
-  const chosen = typeof practitionerId === "string" ? getPractitioner(practitionerId) : undefined;
-  const chosenSlot =
-    chosen && typeof slot === "string" && getOpenSlots(chosen.id).some((d) => d.slots.includes(slot)) ? slot : undefined;
-
-  const practitioners = PRACTITIONERS.map((p) => ({ ...p, days: getOpenSlots(p.id) }));
-
+export default function ConsultPage() {
   return (
     <div className="mx-auto max-w-6xl px-4 pt-10">
       <h1 className="font-display text-4xl text-forest-900">Consult an Ayurvedic doctor</h1>
@@ -42,28 +32,10 @@ export default async function ConsultPage({ searchParams }: PageProps<"/consult"
           ))}
         </ul>
 
-        <div id="booking" className="scroll-mt-24 space-y-4">
-          {chosen && chosenSlot && (
-            <section aria-label="Your selection" className="rounded-2xl bg-leaf-100 p-4">
-              <p className="flex items-center gap-2 font-bold text-forest-900">
-                <CalendarCheck className="h-5 w-5" aria-hidden /> {chosen.title}
-              </p>
-              <p className="mt-1 text-forest-800">
-                {formatSlotDay(chosenSlot)} at {formatSlotTime(chosenSlot)} IST · {formatINR(chosen.fee)}
-              </p>
-              <button
-                type="button"
-                disabled
-                className="mt-3 h-11 w-full rounded-full bg-forest-700 font-semibold text-white disabled:opacity-50"
-              >
-                Confirm &amp; pay
-              </button>
-              <p className="mt-2 text-center text-xs text-muted">
-                Online payment and instant confirmation are coming soon.
-              </p>
-            </section>
-          )}
-          <BookingWidget practitioners={practitioners} />
+        <div id="booking" className="scroll-mt-24">
+          <Suspense fallback={<ConsultBookingSkeleton />}>
+            <ConsultBooking />
+          </Suspense>
         </div>
       </div>
     </div>

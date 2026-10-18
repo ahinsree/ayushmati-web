@@ -11,3 +11,4 @@ next-env.d.ts
 .DS_Store
 src/generated/
 .ai-sdlc/
+.pages-build-api/

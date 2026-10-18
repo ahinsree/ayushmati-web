@@ -2,6 +2,8 @@
 
 The new ayushmati website: a nature-inspired storefront for Ayushmati's in-house Ayurvedic medicines, skincare, hair care and supplements; online consultations with Ayushmati's doctors; and an AI wellness guide that runs a preliminary Ayurvedic consultation and renders product carousels, booking widgets and personalised routines inside the chat.
 
+**Demo:** https://ahinsree.github.io/ayushmati-web/ is a static build on GitHub Pages. Every page works, but the AI guide gives scripted example replies, because Pages has no server to call Claude.
+
 **Stack:** Next.js 16 · React 19 · Tailwind CSS 4 · Vercel AI SDK 6 + Claude · PostgreSQL + Prisma · Razorpay · Auth.js · Vitest · GitHub Actions → Vercel. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Status
@@ -40,6 +42,10 @@ npm run dev                    # http://localhost:3000
 2. Create a Vercel project (`npx vercel link`), then add the repository secrets `VERCEL_TOKEN`, `VERCEL_ORG_ID` and `VERCEL_PROJECT_ID`, plus `DATABASE_URL` once there are migrations.
 3. In Vercel, set the runtime env vars from `.env.example` (`ANTHROPIC_API_KEY`, `NEXT_PUBLIC_SITE_URL`, ...).
 4. `.github/workflows/deploy.yml` then verifies every PR (lint, typecheck, tests, build), posts a preview URL, and deploys `main` to production. Until the secrets exist, it verifies but skips deploys.
+
+### Static demo (GitHub Pages)
+
+`.github/workflows/pages.yml` publishes the demo on every push to `main`. `npm run build:pages` builds it locally into `out/`. The build sets aside the server-only `/api/chat` route, exports static HTML under `/ayushmati-web`, and switches the assistant to the scripted replies in `src/components/chat/demo-replies.ts`.
 
 ## Building features with the AI SDLC team
 

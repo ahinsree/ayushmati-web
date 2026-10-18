@@ -16,7 +16,8 @@
     "test:watch": "vitest",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
-    "db:deploy": "prisma migrate deploy"
+    "db:deploy": "prisma migrate deploy",
+    "build:pages": "node scripts/build-pages.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.133",

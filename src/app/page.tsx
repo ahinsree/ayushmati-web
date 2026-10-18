@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ArrowRight, CalendarCheck, FlaskConical, Leaf, MessageCircleHeart, ShieldCheck, Stethoscope, Video } from "lucide-react";
 import { JsonLd } from "@/components/JsonLd";
-import { YouTubeEmbed } from "@/components/YouTubeEmbed";
+import { HeroVideo } from "@/components/HeroVideo";
 import { ProductCard } from "@/components/shop/ProductCard";
 import { ProductVisual } from "@/components/shop/ProductVisual";
 import { CATEGORIES, getFeaturedProducts, type Category } from "@/lib/catalog";
@@ -42,41 +42,33 @@ export default function HomePage() {
         }}
       />
 
-      {/* Hero with the introductory film */}
-      <section className="leaf-pattern relative overflow-hidden">
-        <div className="mx-auto grid max-w-6xl items-center gap-10 px-4 pb-16 pt-12 lg:grid-cols-[1fr_1.15fr] lg:pb-24 lg:pt-20">
-          <div>
-            <p className="inline-flex items-center gap-2 rounded-full bg-leaf-100 px-3 py-1 text-sm font-semibold text-forest-700">
-              <Leaf className="h-4 w-4" aria-hidden /> 5,000 years of Ayurveda
-            </p>
-            <h1 className="mt-5 font-display text-4xl leading-[1.08] text-forest-900 sm:text-5xl lg:text-6xl">
-              Ancient wisdom for <span className="italic text-forest-600">modern wellness</span>
-            </h1>
-            <p className="mt-5 max-w-xl text-lg leading-relaxed text-muted">
-              Authentic Ayurvedic medicines, herbal skincare and hair care crafted in our own facility, and expert doctors
-              who see you as a whole person, now online.
-            </p>
-            <div className="mt-8 flex flex-wrap gap-3">
-              <Link
-                href="/shop"
-                className="inline-flex h-12 items-center gap-2 rounded-full bg-forest-700 px-6 font-semibold text-white shadow-sm hover:bg-forest-600"
-              >
-                Shop remedies <ArrowRight className="h-4 w-4" aria-hidden />
-              </Link>
-              <Link
-                href="/consult"
-                className="inline-flex h-12 items-center gap-2 rounded-full bg-white px-6 font-semibold text-forest-800 ring-1 ring-forest-700/30 hover:bg-leaf-100"
-              >
-                Consult a doctor
-              </Link>
-            </div>
-          </div>
-          <div>
-            <YouTubeEmbed id={SITE.introVideoId} start={SITE.introVideoStart} title="Discover Ayushmati Ayurveda" />
-            <p className="mt-3 text-center text-sm text-muted">Watch: the Ayushmati story</p>
-          </div>
+      {/* Full-screen hero: the introductory film plays behind the header and copy */}
+      <HeroVideo id={SITE.introVideoId} start={SITE.introVideoStart} focusX={0.85} title="Discover Ayushmati Ayurveda">
+        <p className="inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1 text-sm font-semibold text-leaf-100 ring-1 ring-white/25 backdrop-blur">
+          <Leaf className="h-4 w-4" aria-hidden /> 5,000 years of Ayurveda
+        </p>
+        <h1 className="mt-4 max-w-2xl font-display text-4xl leading-[1.05] text-white drop-shadow-sm sm:text-5xl lg:text-6xl">
+          Ancient wisdom for <span className="italic text-leaf-300">modern wellness</span>
+        </h1>
+        <p className="mt-4 max-w-lg leading-relaxed text-white/90 drop-shadow-sm sm:text-lg">
+          Authentic Ayurvedic medicines, herbal skincare and hair care crafted in our own facility, and expert doctors
+          who see you as a whole person, now online.
+        </p>
+        <div className="mt-7 flex flex-wrap items-center gap-3">
+          <Link
+            href="/shop"
+            className="inline-flex h-12 items-center gap-2 rounded-full bg-leaf-500 px-6 font-semibold text-forest-950 shadow-sm hover:bg-leaf-300"
+          >
+            Shop remedies <ArrowRight className="h-4 w-4" aria-hidden />
+          </Link>
+          <Link
+            href="/consult"
+            className="inline-flex h-12 items-center gap-2 rounded-full bg-white px-6 font-semibold text-forest-800 hover:bg-leaf-100"
+          >
+            Consult a doctor
+          </Link>
         </div>
-      </section>
+      </HeroVideo>
 
       {/* Trust bar */}
       <section aria-label="Why Ayushmati" className="border-y border-forest-900/10 bg-white">

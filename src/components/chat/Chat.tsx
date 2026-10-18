@@ -2,9 +2,11 @@
 
 import { useChat } from "@ai-sdk/react";
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, Leaf, Loader2, RotateCcw, Square } from "lucide-react";
+import { ArrowUp, Info, Leaf, Loader2, RotateCcw, Square } from "lucide-react";
 import type { AssistantMessage } from "@/lib/ai/tools";
+import { SITE } from "@/lib/site";
 import { BookingWidget } from "./BookingWidget";
+import { demoReply } from "./demo-replies";
 import { ProductCarousel } from "./ProductCarousel";
 import { RichText } from "./RichText";
 import { RoutineCard } from "./RoutineCard";
@@ -19,6 +21,7 @@ const STARTERS = [
 ];
 
 type Part = AssistantMessage["parts"][number];
+type Variant = "page" | "panel";
 
 function ToolPending({ label }: { label: string }) {
   return (
@@ -63,11 +66,85 @@ function MessagePart({ part }: { part: Part }) {
   }
 }
 
-export function Chat({ variant = "page" }: { variant?: "page" | "panel" }) {
+export function Chat({ variant = "page" }: { variant?: Variant }) {
+  return SITE.staticDemo ? <DemoChat variant={variant} /> : <LiveChat variant={variant} />;
+}
+
+/** The real assistant: Claude via /api/chat. */
+function LiveChat({ variant }: { variant: Variant }) {
   const { messages, sendMessage, status, stop, error, regenerate } = useChat<AssistantMessage>();
+  return (
+    <ChatView
+      variant={variant}
+      messages={messages}
+      thinking={status === "submitted"}
+      busy={status === "submitted" || status === "streaming"}
+      error={!!error}
+      onSend={(text) => sendMessage({ text })}
+      onStop={stop}
+      onRetry={() => regenerate()}
+    />
+  );
+}
+
+/** Static demo (GitHub Pages): scripted replies that render the same generative UI. */
+function DemoChat({ variant }: { variant: Variant }) {
+  const [messages, setMessages] = useState<AssistantMessage[]>([]);
+  const [thinking, setThinking] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  useEffect(() => () => clearTimeout(timer.current), []);
+
+  function send(text: string) {
+    setMessages((m) => [...m, { id: `u-${Date.now()}`, role: "user", parts: [{ type: "text", text }] }]);
+    setThinking(true);
+    timer.current = setTimeout(() => {
+      setMessages((m) => [...m, demoReply(text)]);
+      setThinking(false);
+    }, 700);
+  }
+
+  return (
+    <ChatView
+      variant={variant}
+      messages={messages}
+      thinking={thinking}
+      busy={thinking}
+      error={false}
+      onSend={send}
+      onStop={() => {
+        clearTimeout(timer.current);
+        setThinking(false);
+      }}
+      onRetry={() => {}}
+      notice="Demo mode: replies are scripted examples. The live AI guide runs on the full deployment."
+    />
+  );
+}
+
+function ChatView({
+  variant,
+  messages,
+  thinking,
+  busy,
+  error,
+  onSend,
+  onStop,
+  onRetry,
+  notice,
+}: {
+  variant: Variant;
+  messages: AssistantMessage[];
+  thinking: boolean;
+  busy: boolean;
+  error: boolean;
+  onSend: (text: string) => void;
+  onStop: () => void;
+  onRetry: () => void;
+  notice?: string;
+}) {
   const [input, setInput] = useState("");
   const logRef = useRef<HTMLDivElement>(null);
-  const busy = status === "submitted" || status === "streaming";
 
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: "smooth" });
@@ -76,12 +153,17 @@ export function Chat({ variant = "page" }: { variant?: "page" | "panel" }) {
   function send(text: string) {
     const trimmed = text.trim();
     if (!trimmed || busy) return;
-    sendMessage({ text: trimmed });
+    onSend(trimmed);
     setInput("");
   }
 
   return (
     <div className={`flex min-h-0 flex-col ${variant === "page" ? "h-[calc(100dvh-12rem)] min-h-[32rem]" : "h-full"}`}>
+      {notice && (
+        <p className="flex items-center gap-2 border-b border-turmeric/30 bg-turmeric/10 px-4 py-2 text-xs text-earth">
+          <Info className="h-4 w-4 shrink-0" aria-hidden /> {notice}
+        </p>
+      )}
       <div ref={logRef} role="log" aria-live="polite" aria-label="Conversation" className="flex-1 space-y-5 overflow-y-auto p-4">
         {messages.length === 0 && (
           <div className="mx-auto max-w-md py-6 text-center">
@@ -131,12 +213,12 @@ export function Chat({ variant = "page" }: { variant?: "page" | "panel" }) {
           ),
         )}
 
-        {status === "submitted" && <ToolPending label="Thinking…" />}
+        {thinking && <ToolPending label="Thinking…" />}
 
         {error && (
           <div role="alert" className="flex items-center gap-3 rounded-xl bg-red-50 p-3 text-sm text-red-800">
             <span className="flex-1">Something went wrong. Please try again.</span>
-            <button type="button" onClick={() => regenerate()} className="inline-flex items-center gap-1 font-semibold underline">
+            <button type="button" onClick={onRetry} className="inline-flex items-center gap-1 font-semibold underline">
               <RotateCcw className="h-4 w-4" aria-hidden /> Retry
             </button>
           </div>
@@ -172,7 +254,7 @@ export function Chat({ variant = "page" }: { variant?: "page" | "panel" }) {
           {busy ? (
             <button
               type="button"
-              onClick={() => stop()}
+              onClick={onStop}
               aria-label="Stop"
               className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-forest-900 text-white"
             >

@@ -10,6 +10,9 @@ import { CATEGORIES, PRODUCTS, getProduct } from "@/lib/catalog";
 import { formatINR } from "@/lib/format";
 import { SITE } from "@/lib/site";
 
+// Only the catalogue's products exist; anything else is a 404 (also required for static export).
+export const dynamicParams = false;
+
 export function generateStaticParams() {
   return PRODUCTS.map((p) => ({ slug: p.slug }));
 }

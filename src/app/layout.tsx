@@ -21,9 +21,8 @@ export const metadata: Metadata = {
     title: SITE.name,
     description: SITE.description,
     locale: "en_IN",
-    images: [{ url: "/logo.png", width: 562, height: 192, alt: SITE.name }],
+    images: [{ url: `${SITE.url}/logo.png`, width: 562, height: 192, alt: SITE.name }],
   },
-  icons: { icon: "/icon.svg" },
 };
 
 export const viewport: Viewport = { themeColor: "#335f20" };
