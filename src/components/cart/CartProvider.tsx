@@ -3,13 +3,14 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { getProduct } from "@/lib/catalog";
 
-// Client-side cart kept in localStorage. Checkout and server-side carts arrive with the
-// Razorpay milestone (docs/backlog/03-checkout-razorpay.md).
+// Client-side cart kept in localStorage. Checkout prices it again on the server.
 
 export type CartLine = { slug: string; qty: number };
 
 type CartContextValue = {
   lines: CartLine[];
+  /** False until the saved cart has been read from storage after mount. */
+  ready: boolean;
   count: number;
   subtotal: number;
   add: (slug: string, qty?: number) => void;
@@ -82,8 +83,8 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<CartContextValue>(() => {
     const count = lines.reduce((n, l) => n + l.qty, 0);
     const subtotal = lines.reduce((sum, l) => sum + (getProduct(l.slug)?.price ?? 0) * l.qty, 0);
-    return { lines, count, subtotal, add, setQty, remove, clear };
-  }, [lines, add, setQty, remove, clear]);
+    return { lines, ready: loaded, count, subtotal, add, setQty, remove, clear };
+  }, [lines, loaded, add, setQty, remove, clear]);
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;
 }

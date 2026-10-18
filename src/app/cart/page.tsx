@@ -69,15 +69,14 @@ export default function CartPage() {
               <span>Subtotal</span>
               <span className="font-bold text-forest-900">{formatINR(subtotal)}</span>
             </div>
-            <p className="mt-1 text-xs text-muted">Inclusive of GST. Shipping calculated at checkout.</p>
-            <button
-              type="button"
-              disabled
-              className="mt-5 h-12 w-full rounded-full bg-forest-700 font-semibold text-white disabled:opacity-50"
+            <p className="mt-1 text-xs text-muted">Inclusive of GST.</p>
+            <Link
+              href="/checkout"
+              className="mt-5 flex h-12 w-full items-center justify-center rounded-full bg-forest-700 font-semibold text-white hover:bg-forest-600"
             >
               Checkout
-            </button>
-            <p className="mt-2 text-center text-xs text-muted">Secure Razorpay checkout is coming soon.</p>
+            </Link>
+            <p className="mt-2 text-center text-xs text-muted">Secure payment with Razorpay (test mode).</p>
           </aside>
         </div>
       )}

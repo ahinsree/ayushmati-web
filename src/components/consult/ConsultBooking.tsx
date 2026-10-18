@@ -6,9 +6,8 @@ import { CalendarCheck } from "lucide-react";
 import { BookingWidget, type BookablePractitioner } from "@/components/chat/BookingWidget";
 import { PRACTITIONERS, getOpenSlots, getPractitioner } from "@/lib/consultations";
 import { formatINR, formatSlotDay, formatSlotTime } from "@/lib/format";
-
-// How far ahead the calendar offers appointments (clinic days, Sundays excluded).
-const BOOKING_WINDOW_DAYS = 30;
+import { BOOKING_WINDOW_DAYS } from "@/lib/payments/pricing";
+import { ConsultPayForm } from "./ConsultPayForm";
 
 // Open slots depend on the current time, so they're computed in the browser after mount.
 // That keeps /consult a static page (it also works in the GitHub Pages demo).
@@ -38,14 +37,7 @@ export function ConsultBooking() {
           <p className="mt-1 text-forest-800">
             {formatSlotDay(chosenSlot)} at {formatSlotTime(chosenSlot)} IST · {formatINR(chosen.fee)}
           </p>
-          <button
-            type="button"
-            disabled
-            className="mt-3 h-11 w-full rounded-full bg-forest-700 font-semibold text-white disabled:opacity-50"
-          >
-            Confirm &amp; pay
-          </button>
-          <p className="mt-2 text-center text-xs text-muted">Online payment and instant confirmation are coming soon.</p>
+          <ConsultPayForm practitioner={chosen} slot={chosenSlot} />
         </section>
       )}
       <BookingWidget

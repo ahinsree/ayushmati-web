@@ -12,10 +12,11 @@ The new ayushmati website: a nature-inspired storefront for Ayushmati's in-house
 | --- | --- |
 | Landing page with intro video, SEO (metadata, JSON-LD, sitemap), accessibility | Done |
 | Storefront: listing, category filter, product pages, cart | Done (sample catalogue) |
+| Razorpay checkout for orders and consultation fees | **Test mode** (orders aren't stored yet; webhook next) |
 | AI wellness guide with generative UI (products, booking, routine, urgent care) | Done |
-| Consultations: practitioners and slot picker | Done (sample practitioners, no payment yet) |
+| Consultations: practitioners, calendar and slot picker | Done (sample practitioners; payment in test mode) |
 | CI/CD (`deploy.yml`) and AI SDLC team (`ai-sdlc.yml`) | Done |
-| Database, accounts, Razorpay checkout, paid bookings and notifications, assistant hardening | Backlog: [docs/backlog](docs/backlog) |
+| Database, accounts, order storage and webhooks, booking confirmations and notifications, assistant hardening | Backlog: [docs/backlog](docs/backlog) |
 
 The products and practitioners are **placeholders**. Replace them with Ayushmati's real SKUs, prices, approved label copy and doctors before launch.
 
@@ -35,6 +36,14 @@ npm run dev                    # http://localhost:3000
 | `npm run lint` / `npm run typecheck` | ESLint / route type generation + `tsc` |
 | `npm run build` | Production build |
 | `npm run db:migrate` | Prisma migrations (once backlog 01 lands) |
+
+## Payments (Razorpay test mode)
+
+1. In the Razorpay Dashboard, switch to **Test Mode** and generate API keys (the key id starts with `rzp_test_`).
+2. Put them in `.env.local` as `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET`, then restart `npm run dev`.
+3. Pay with a test card (`4100 2800 0000 1007`, any future expiry and CVV, any 4–10 digit OTP) or the test UPI ID `success@razorpay` (`failure@razorpay` to see a failure).
+
+The server prices every order itself, creates the Razorpay order, and verifies Checkout's signature before showing a confirmation. On the static GitHub Pages demo there's no server, so payments are simulated and labelled as such.
 
 ## Deploy (GitHub → Vercel)
 
