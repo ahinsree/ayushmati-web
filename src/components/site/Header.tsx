@@ -12,7 +12,8 @@ const NAV = [
   { href: "/shop", label: "Shop" },
   { href: "/consult", label: "Consult a Doctor" },
   { href: "/assistant", label: "AI Wellness Guide" },
-  { href: "/#about", label: "Our Story" },
+  { href: "/about", label: "About Us" },
+  { href: "/contact", label: "Contact" },
 ];
 
 // Pages whose hero runs full-bleed behind the header.
@@ -47,7 +48,7 @@ export function Header() {
       }`}
     >
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-4 px-4 sm:h-20">
-        <Link href="/" aria-label="Ayushmati Ayurveda home" className="shrink-0">
+        <Link href="/" aria-label="Ayushmati home" className="shrink-0">
           <Image
             src={asset(overlay ? "/logo-light.png" : "/logo.png")}
             alt="Ayushmati"
@@ -58,9 +59,9 @@ export function Header() {
           />
         </Link>
 
-        <nav aria-label="Main" className="hidden md:block">
+        <nav aria-label="Main" className="hidden lg:block">
           <ul
-            className={`flex items-center gap-7 text-[15px] font-semibold transition-colors ${
+            className={`flex items-center gap-6 text-[15px] font-semibold transition-colors ${
               overlay ? "text-white [text-shadow:0_1px_8px_rgb(0_0_0/0.35)]" : "text-forest-800"
             }`}
           >
@@ -91,7 +92,7 @@ export function Header() {
           </Link>
           <button
             type="button"
-            className={`${iconButton} md:hidden`}
+            className={`${iconButton} lg:hidden`}
             aria-expanded={open}
             aria-controls="mobile-nav"
             aria-label={open ? "Close menu" : "Open menu"}
@@ -103,7 +104,7 @@ export function Header() {
       </div>
 
       {open && (
-        <nav id="mobile-nav" aria-label="Mobile" className="border-t border-forest-900/10 md:hidden">
+        <nav id="mobile-nav" aria-label="Mobile" className="border-t border-forest-900/10 lg:hidden">
           <ul className="mx-auto max-w-6xl px-4 py-2">
             {NAV.map((item) => (
               <li key={item.href}>

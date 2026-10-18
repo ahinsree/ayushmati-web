@@ -7,6 +7,9 @@ import { BookingWidget, type BookablePractitioner } from "@/components/chat/Book
 import { PRACTITIONERS, getOpenSlots, getPractitioner } from "@/lib/consultations";
 import { formatINR, formatSlotDay, formatSlotTime } from "@/lib/format";
 
+// How far ahead the calendar offers appointments (clinic days, Sundays excluded).
+const BOOKING_WINDOW_DAYS = 30;
+
 // Open slots depend on the current time, so they're computed in the browser after mount.
 // That keeps /consult a static page (it also works in the GitHub Pages demo).
 export function ConsultBooking() {
@@ -15,7 +18,7 @@ export function ConsultBooking() {
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setPractitioners(PRACTITIONERS.map((p) => ({ ...p, days: getOpenSlots(p.id) })));
+    setPractitioners(PRACTITIONERS.map((p) => ({ ...p, days: getOpenSlots(p.id, new Date(), BOOKING_WINDOW_DAYS) })));
   }, []);
 
   if (!practitioners) return <ConsultBookingSkeleton />;
@@ -46,6 +49,7 @@ export function ConsultBooking() {
         </section>
       )}
       <BookingWidget
+        calendar
         key={chosen?.id ?? "all"}
         practitioners={
           chosen

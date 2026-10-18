@@ -5,10 +5,20 @@ import { useState } from "react";
 import { CalendarCheck, Video } from "lucide-react";
 import type { Practitioner, SlotDay } from "@/lib/consultations";
 import { formatINR, formatSlotDay, formatSlotTime } from "@/lib/format";
+import { SlotCalendar } from "@/components/consult/SlotCalendar";
 
 export type BookablePractitioner = Practitioner & { days: SlotDay[] };
 
-export function BookingWidget({ practitioners, reason }: { practitioners: BookablePractitioner[]; reason?: string }) {
+export function BookingWidget({
+  practitioners,
+  reason,
+  calendar = false,
+}: {
+  practitioners: BookablePractitioner[];
+  reason?: string;
+  /** Month calendar for picking the day (consult page); otherwise a compact row of days (chat). */
+  calendar?: boolean;
+}) {
   const [practitionerId, setPractitionerId] = useState(practitioners[0]?.id);
   const practitioner = practitioners.find((p) => p.id === practitionerId) ?? practitioners[0];
   const [date, setDate] = useState<string | undefined>(practitioner?.days[0]?.date);
@@ -62,28 +72,45 @@ export function BookingWidget({ practitioners, reason }: { practitioners: Bookab
         <p className="mt-4 text-sm text-muted">No open slots in the next few days. Please check back soon.</p>
       ) : (
         <>
-          <fieldset className="mt-4">
-            <legend className="text-xs font-bold uppercase tracking-wider text-earth">Day</legend>
-            <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
-              {practitioner.days.map((d) => (
-                <button
-                  key={d.date}
-                  type="button"
-                  aria-pressed={d.date === day?.date}
-                  onClick={() => {
-                    setDate(d.date);
-                    setSlot(undefined);
-                  }}
-                  className="shrink-0 rounded-xl px-3 py-2 text-sm font-semibold ring-1 ring-forest-700/30 transition aria-pressed:bg-forest-700 aria-pressed:text-white"
-                >
-                  {formatSlotDay(d.slots[0])}
-                </button>
-              ))}
-            </div>
-          </fieldset>
+          {calendar ? (
+            <fieldset className="mt-4">
+              <legend className="mb-2 text-xs font-bold uppercase tracking-wider text-earth">Date</legend>
+              <SlotCalendar
+                key={practitioner.id}
+                days={practitioner.days}
+                selected={day?.date}
+                onSelect={(d) => {
+                  setDate(d);
+                  setSlot(undefined);
+                }}
+              />
+            </fieldset>
+          ) : (
+            <fieldset className="mt-4">
+              <legend className="text-xs font-bold uppercase tracking-wider text-earth">Day</legend>
+              <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
+                {practitioner.days.map((d) => (
+                  <button
+                    key={d.date}
+                    type="button"
+                    aria-pressed={d.date === day?.date}
+                    onClick={() => {
+                      setDate(d.date);
+                      setSlot(undefined);
+                    }}
+                    className="shrink-0 rounded-xl px-3 py-2 text-sm font-semibold ring-1 ring-forest-700/30 transition aria-pressed:bg-forest-700 aria-pressed:text-white"
+                  >
+                    {formatSlotDay(d.slots[0])}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+          )}
 
           <fieldset className="mt-3">
-            <legend className="text-xs font-bold uppercase tracking-wider text-earth">Time (IST)</legend>
+            <legend className="text-xs font-bold uppercase tracking-wider text-earth">
+              Time (IST){calendar && day ? ` · ${formatSlotDay(day.slots[0])}` : ""}
+            </legend>
             <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-4">
               {day?.slots.map((s) => (
                 <button

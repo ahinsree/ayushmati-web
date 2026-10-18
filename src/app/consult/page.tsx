@@ -32,7 +32,7 @@ export default function ConsultPage() {
           ))}
         </ul>
 
-        <div id="booking" className="scroll-mt-24">
+        <div id="booking" className="order-first scroll-mt-24 lg:order-last">
           <Suspense fallback={<ConsultBookingSkeleton />}>
             <ConsultBooking />
           </Suspense>

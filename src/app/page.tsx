@@ -43,7 +43,7 @@ export default function HomePage() {
       />
 
       {/* Full-screen hero: the introductory film plays behind the header and copy */}
-      <HeroVideo id={SITE.introVideoId} start={SITE.introVideoStart} focusX={0.85} title="Discover Ayushmati Ayurveda">
+      <HeroVideo id={SITE.introVideoId} start={SITE.introVideoStart} focusX={0.85} title="Discover Ayushmati">
         <p className="inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1 text-sm font-semibold text-leaf-100 ring-1 ring-white/25 backdrop-blur">
           <Leaf className="h-4 w-4" aria-hidden /> 5,000 years of Ayurveda
         </p>
@@ -195,6 +195,9 @@ export default function HomePage() {
               Ayushmati we prepare classical formulations in-house and pair them with personal guidance, so that this
               tradition fits the pace of modern life.
             </p>
+            <Link href="/about" className="mt-5 inline-flex items-center gap-2 font-semibold text-forest-700 hover:underline">
+              Meet our doctors <ArrowRight className="h-4 w-4" aria-hidden />
+            </Link>
           </div>
           <ul className="grid gap-4 sm:grid-cols-3">
             {DOSHAS.map((d) => (
