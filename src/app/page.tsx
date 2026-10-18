@@ -42,28 +42,32 @@ export default function HomePage() {
         }}
       />
 
-      {/* Full-screen hero: the introductory film plays behind the header and copy */}
+      {/* Full-screen hero: the introductory film plays behind the header and copy.
+          Short screens (phones in landscape) drop the badge and paragraph so the copy clears the header. */}
       <HeroVideo id={SITE.introVideoId} start={SITE.introVideoStart} focusX={0.85} title="Discover Ayushmati">
-        <p className="inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1 text-sm font-semibold text-leaf-100 ring-1 ring-white/25 backdrop-blur">
+        <p className="inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1 text-xs font-semibold text-leaf-100 ring-1 ring-white/25 backdrop-blur sm:text-sm [@media(max-height:560px)]:hidden">
           <Leaf className="h-4 w-4" aria-hidden /> 5,000 years of Ayurveda
         </p>
-        <h1 className="mt-4 max-w-2xl font-display text-4xl leading-[1.05] text-white drop-shadow-sm sm:text-5xl lg:text-6xl">
+        <h1 className="mt-3 max-w-2xl font-display text-[2.1rem] leading-[1.05] text-white drop-shadow-sm sm:mt-4 sm:text-5xl lg:text-6xl [@media(max-height:560px)]:mt-0 [@media(max-height:560px)]:text-3xl!">
           Ancient wisdom for <span className="italic text-leaf-300">modern wellness</span>
         </h1>
-        <p className="mt-4 max-w-lg leading-relaxed text-white/90 drop-shadow-sm sm:text-lg">
-          Authentic Ayurvedic medicines, herbal skincare and hair care crafted in our own facility, and expert doctors
-          who see you as a whole person, now online.
+        <p className="mt-3 max-w-lg text-[15px] leading-relaxed text-white/90 drop-shadow-sm sm:mt-4 sm:text-lg [@media(max-height:560px)]:hidden">
+          <span className="sm:hidden">In-house Ayurvedic remedies and expert doctors, now online.</span>
+          <span className="hidden sm:inline">
+            Authentic Ayurvedic medicines, herbal skincare and hair care crafted in our own facility, and expert doctors
+            who see you as a whole person, now online.
+          </span>
         </p>
-        <div className="mt-7 flex flex-wrap items-center gap-3">
+        <div className="mt-5 flex flex-wrap items-center gap-2.5 sm:mt-7 sm:gap-3 [@media(max-height:560px)]:mt-4">
           <Link
             href="/shop"
-            className="inline-flex h-12 items-center gap-2 rounded-full bg-leaf-500 px-6 font-semibold text-forest-950 shadow-sm hover:bg-leaf-300"
+            className="inline-flex h-11 items-center gap-2 rounded-full bg-leaf-500 px-5 font-semibold sm:h-12 sm:px-6 text-forest-950 shadow-sm hover:bg-leaf-300"
           >
             Shop remedies <ArrowRight className="h-4 w-4" aria-hidden />
           </Link>
           <Link
             href="/consult"
-            className="inline-flex h-12 items-center gap-2 rounded-full bg-white px-6 font-semibold text-forest-800 hover:bg-leaf-100"
+            className="inline-flex h-11 items-center gap-2 rounded-full bg-white px-5 font-semibold sm:h-12 sm:px-6 text-forest-800 hover:bg-leaf-100"
           >
             Consult a doctor
           </Link>

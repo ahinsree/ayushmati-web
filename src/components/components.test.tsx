@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { CartProvider, useCart } from "@/components/cart/CartProvider";
 import { BookingWidget } from "@/components/chat/BookingWidget";
@@ -52,8 +52,18 @@ describe("HeroVideo", () => {
   beforeEach(() => {
     FakePlayer.last = undefined;
     vi.stubGlobal("YT", { Player: FakePlayer, PlayerState: STATE });
+    // Run "when idle" work straight away.
+    vi.stubGlobal("requestIdleCallback", (cb: () => void) => {
+      cb();
+      return 1;
+    });
+    vi.stubGlobal("cancelIdleCallback", () => {});
   });
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    Reflect.deleteProperty(navigator, "connection");
+    Reflect.deleteProperty(document, "visibilityState");
+  });
 
   function stubReducedMotion(reduce: boolean) {
     vi.stubGlobal("matchMedia", (q: string) => ({ matches: reduce && q.includes("reduce"), media: q }));
@@ -126,6 +136,46 @@ describe("HeroVideo", () => {
     expect(p.calls.slice(-2)).toEqual(["seek:9", "play"]);
     await userEvent.click(screen.getByRole("button", { name: /pause film/i }));
     expect(p.calls.at(-1)).toBe("pause");
+  });
+
+  it("shows the still image on Data Saver or slow connections until the visitor presses play", async () => {
+    stubReducedMotion(false);
+    Object.defineProperty(navigator, "connection", { value: { saveData: true }, configurable: true });
+    await renderHero();
+    expect(FakePlayer.last).toBeUndefined();
+    await userEvent.click(screen.getByRole("button", { name: /play film/i }));
+    await act(async () => {});
+    expect(FakePlayer.last).toBeDefined();
+  });
+
+  it("turns sound on after a tap on a phone (touchend)", async () => {
+    stubReducedMotion(false);
+    await renderHero();
+    const p = ready();
+    fireEvent.touchEnd(screen.getByRole("heading", { name: "Headline" }));
+    expect(p.calls).toContain("unMute");
+  });
+
+  it("pauses while the tab is hidden without treating it as blocked sound, then resumes", async () => {
+    stubReducedMotion(false);
+    await renderHero();
+    const p = ready();
+    await userEvent.click(screen.getByRole("button", { name: /sound on/i }));
+
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(p.calls.at(-1)).toBe("pause");
+    act(() => p.opts.events.onStateChange({ target: p, data: STATE.PAUSED }));
+    expect(p.calls.at(-1)).toBe("pause"); // not re-muted and restarted
+    expect(screen.getByRole("button", { name: /sound off/i })).toBeInTheDocument();
+
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(p.calls.at(-1)).toBe("play");
   });
 
   it("waits for the visitor when reduced motion is preferred", async () => {

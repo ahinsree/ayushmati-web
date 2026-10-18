@@ -19,6 +19,29 @@ import { Pause, Play, Volume2, VolumeX } from "lucide-react";
 const OVERSCAN = 1.12;
 const RATIO = 16 / 9;
 
+type NetworkInformation = { saveData?: boolean; effectiveType?: string };
+
+/**
+ * Show the still image instead of autoplaying when motion is unwelcome or data is precious:
+ * reduced-motion preference, Data Saver, or a 2G/3G connection. Visitors can still press play.
+ */
+export function prefersStillImage(): boolean {
+  const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+  const connection = (navigator as Navigator & { connection?: NetworkInformation }).connection;
+  const constrained = !!connection?.saveData || /2g|3g/.test(connection?.effectiveType ?? "");
+  return reduceMotion || constrained;
+}
+
+/** Runs `cb` once the browser is idle, so the poster and page paint before YouTube's ~1 MB player loads. */
+function whenIdle(cb: () => void): () => void {
+  if (typeof window.requestIdleCallback === "function") {
+    const handle = window.requestIdleCallback(cb, { timeout: 2000 });
+    return () => window.cancelIdleCallback?.(handle);
+  }
+  const handle = window.setTimeout(cb, 600);
+  return () => window.clearTimeout(handle);
+}
+
 type YTPlayer = {
   playVideo(): void;
   pauseVideo(): void;
@@ -108,6 +131,8 @@ export function HeroVideo({
   const playerRef = useRef<YTPlayer | null>(null);
   const userMutedRef = useRef(false);
   const userPausedRef = useRef(false);
+  const autoPausedRef = useRef(false); // paused by us: scrolled away or tab hidden
+  const inViewRef = useRef(true);
   const mutedRef = useRef(true);
 
   const [enabled, setEnabled] = useState(false); // false until we know motion is OK, or the visitor presses play
@@ -131,11 +156,10 @@ export function HeroVideo({
     setMuted(true);
   }, []);
 
-  // Autoplay unless the visitor prefers reduced motion.
+  // Autoplay unless motion or data use is unwelcome (see prefersStillImage).
   useEffect(() => {
-    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setEnabled(!reduce);
+    setEnabled(!prefersStillImage());
   }, []);
 
   // Keep the player covering the hero at any size.
@@ -158,66 +182,69 @@ export function HeroVideo({
     const mountEl = document.createElement("div");
     host.appendChild(mountEl);
 
-    loadYouTubeApi()
-      .then((YT) => {
-        if (cancelled) return;
-        playerRef.current = new YT.Player(mountEl, {
-          host: "https://www.youtube-nocookie.com",
-          videoId: id,
-          width: "100%",
-          height: "100%",
-          playerVars: {
-            autoplay: 1,
-            mute: 1,
-            controls: 0,
-            disablekb: 1,
-            fs: 0,
-            playsinline: 1,
-            rel: 0,
-            iv_load_policy: 3,
-            modestbranding: 1,
-            start,
-          },
-          events: {
-            onReady: ({ target }) => {
-              const iframe = target.getIframe?.();
-              if (iframe) {
-                iframe.title = title;
-                iframe.tabIndex = -1;
-              }
-              target.mute();
-              target.playVideo();
-              // Sound straight away if the browser will allow it.
-              if (navigator.userActivation?.hasBeenActive && !userMutedRef.current) unmute();
+    const cancelIdle = whenIdle(() => {
+      loadYouTubeApi()
+        .then((YT) => {
+          if (cancelled) return;
+          playerRef.current = new YT.Player(mountEl, {
+            host: "https://www.youtube-nocookie.com",
+            videoId: id,
+            width: "100%",
+            height: "100%",
+            playerVars: {
+              autoplay: 1,
+              mute: 1,
+              controls: 0,
+              disablekb: 1,
+              fs: 0,
+              playsinline: 1,
+              rel: 0,
+              iv_load_policy: 3,
+              modestbranding: 1,
+              start,
             },
-            onStateChange: ({ target, data }) => {
-              if (data === YT.PlayerState.PLAYING) setPlaying(true);
-              if (data === YT.PlayerState.ENDED) {
-                // Loop from the intro point rather than from 0:00.
-                target.seekTo(start, true);
+            events: {
+              onReady: ({ target }) => {
+                const iframe = target.getIframe?.();
+                if (iframe) {
+                  iframe.title = title;
+                  iframe.tabIndex = -1;
+                }
+                target.mute();
                 target.playVideo();
-              }
-              if (data === YT.PlayerState.PAUSED) {
-                setPlaying(false);
-                // A pause we didn't ask for while unmuted means the browser blocked sound:
-                // fall back to muted playback until the visitor interacts.
-                if (!userPausedRef.current && !mutedRef.current) {
-                  target.mute();
-                  mutedRef.current = true;
-                  setMuted(true);
+                // Sound straight away if the browser will allow it.
+                if (navigator.userActivation?.hasBeenActive && !userMutedRef.current) unmute();
+              },
+              onStateChange: ({ target, data }) => {
+                if (data === YT.PlayerState.PLAYING) setPlaying(true);
+                if (data === YT.PlayerState.ENDED) {
+                  // Loop from the intro point rather than from 0:00.
+                  target.seekTo(start, true);
                   target.playVideo();
                 }
-              }
+                if (data === YT.PlayerState.PAUSED) {
+                  setPlaying(false);
+                  // A pause we didn't ask for while unmuted means the browser blocked sound:
+                  // fall back to muted playback until the visitor interacts.
+                  if (!userPausedRef.current && !autoPausedRef.current && !mutedRef.current) {
+                    target.mute();
+                    mutedRef.current = true;
+                    setMuted(true);
+                    target.playVideo();
+                  }
+                }
+              },
             },
-          },
+          });
+        })
+        .catch(() => {
+          // Keep the poster image if YouTube can't load.
         });
-      })
-      .catch(() => {
-        // Keep the poster image if YouTube can't load.
-      });
+    });
 
     return () => {
       cancelled = true;
+      cancelIdle();
       playerRef.current?.destroy();
       playerRef.current = null;
       host.replaceChildren();
@@ -232,30 +259,46 @@ export function HeroVideo({
       if (userMutedRef.current || !playerRef.current) return;
       unmute();
     };
+    // Phones grant media permission on a completed tap (touchend/click), not on touch start.
+    const events = ["pointerdown", "keydown", "click", "touchend"] as const;
     const opts = { capture: true } as const;
-    window.addEventListener("pointerdown", onInteract, opts);
-    window.addEventListener("keydown", onInteract, opts);
-    return () => {
-      window.removeEventListener("pointerdown", onInteract, opts);
-      window.removeEventListener("keydown", onInteract, opts);
-    };
+    events.forEach((ev) => window.addEventListener(ev, onInteract, opts));
+    return () => events.forEach((ev) => window.removeEventListener(ev, onInteract, opts));
   }, [enabled, muted, unmute]);
 
-  // Pause while the hero is scrolled out of view, so the soundtrack doesn't follow the visitor.
+  // Pause while the hero is scrolled out of view or the tab is hidden: the soundtrack doesn't
+  // follow the visitor, and phones save data and battery. Resumes when it's visible again.
   useEffect(() => {
+    const sync = () => {
+      const player = playerRef.current;
+      if (!player || userPausedRef.current) return;
+      const visible = inViewRef.current && document.visibilityState !== "hidden";
+      if (visible && autoPausedRef.current) {
+        autoPausedRef.current = false;
+        player.playVideo();
+      } else if (!visible && !autoPausedRef.current) {
+        autoPausedRef.current = true;
+        player.pauseVideo();
+      }
+    };
+
+    document.addEventListener("visibilitychange", sync);
     const el = sectionRef.current;
-    if (!el || typeof IntersectionObserver === "undefined") return;
-    const io = new IntersectionObserver(
-      ([entry]) => {
-        const player = playerRef.current;
-        if (!player || userPausedRef.current) return;
-        if (entry.isIntersecting) player.playVideo();
-        else player.pauseVideo();
-      },
-      { threshold: 0.25 },
-    );
-    io.observe(el);
-    return () => io.disconnect();
+    let io: IntersectionObserver | undefined;
+    if (el && typeof IntersectionObserver !== "undefined") {
+      io = new IntersectionObserver(
+        ([entry]) => {
+          inViewRef.current = entry.isIntersecting;
+          sync();
+        },
+        { threshold: 0.25 },
+      );
+      io.observe(el);
+    }
+    return () => {
+      document.removeEventListener("visibilitychange", sync);
+      io?.disconnect();
+    };
   }, []);
 
   function toggleSound() {
@@ -280,6 +323,7 @@ export function HeroVideo({
     }
     const player = playerRef.current;
     if (!player) return;
+    autoPausedRef.current = false;
     if (playing) {
       userPausedRef.current = true;
       player.pauseVideo();
@@ -292,7 +336,7 @@ export function HeroVideo({
   return (
     <section
       ref={sectionRef}
-      className="relative isolate flex h-svh min-h-[36rem] items-end overflow-hidden bg-forest-950 text-white"
+      className="relative isolate flex h-svh min-h-[32rem] items-end overflow-hidden bg-forest-950 text-white landscape:max-lg:min-h-[24rem]"
     >
       <div className="absolute inset-0" aria-hidden>
         <Image
@@ -319,14 +363,18 @@ export function HeroVideo({
       {/* Light scrims: top for the header, bottom-left for the copy. The centre of the film stays clear. */}
       <div className="absolute inset-x-0 top-0 h-36 bg-gradient-to-b from-black/55 to-transparent" aria-hidden />
       <div
-        className="absolute inset-0 bg-[radial-gradient(ellipse_at_0%_100%,rgb(20_38_12/0.85)_0%,rgb(20_38_12/0.45)_35%,transparent_65%)]"
+        className="absolute inset-x-0 bottom-0 h-3/5 bg-gradient-to-t from-forest-950/90 via-forest-950/45 to-transparent sm:hidden"
+        aria-hidden
+      />
+      <div
+        className="absolute inset-0 hidden bg-[radial-gradient(ellipse_at_0%_100%,rgb(20_38_12/0.85)_0%,rgb(20_38_12/0.45)_35%,transparent_65%)] sm:block"
         aria-hidden
       />
 
-      <div className="relative mx-auto w-full max-w-6xl px-4 pb-12 sm:pb-16">
+      <div className="relative mx-auto w-full max-w-6xl px-4 pb-[max(2rem,env(safe-area-inset-bottom))] sm:pb-16">
         {children}
 
-        <div data-hero-controls className="mt-6 flex items-center gap-2">
+        <div data-hero-controls className="mt-4 flex items-center gap-2 sm:mt-6">
           <button
             type="button"
             onClick={toggleSound}
