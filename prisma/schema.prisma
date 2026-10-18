@@ -1,0 +1,267 @@
+// Target data model. The app currently serves the catalogue and practitioners from
+// src/lib/catalog.ts and src/lib/consultations.ts; the backlog items in docs/backlog move
+// them here, one feature at a time.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Accounts (Auth.js) ----------
+
+model User {
+  id            String        @id @default(cuid())
+  name          String?
+  email         String?       @unique
+  emailVerified DateTime?
+  phone         String?       @unique
+  image         String?
+  role          Role          @default(CUSTOMER)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  accounts      Account[]
+  sessions      Session[]
+  addresses     Address[]
+  orders        Order[]
+  appointments  Appointment[]
+  practitioner  Practitioner?
+}
+
+enum Role {
+  CUSTOMER
+  PRACTITIONER
+  ADMIN
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Address {
+  id         String  @id @default(cuid())
+  userId     String
+  name       String
+  phone      String
+  line1      String
+  line2      String?
+  city       String
+  state      String
+  postalCode String
+  isDefault  Boolean @default(false)
+  user       User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ---------- Catalogue ----------
+
+model Product {
+  id          String          @id @default(cuid())
+  slug        String          @unique
+  name        String
+  category    ProductCategory
+  pricePaise  Int // INR in paise, GST inclusive
+  size        String
+  tagline     String
+  description String          @db.Text
+  usage       String          @db.Text
+  ingredients String[]
+  concerns    String[]
+  doshas      Dosha[]
+  images      String[]
+  stock       Int             @default(0)
+  featured    Boolean         @default(false)
+  active      Boolean         @default(true)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  orderItems  OrderItem[]
+
+  @@index([category, active])
+}
+
+enum ProductCategory {
+  AYURVEDIC_MEDICINE
+  SKINCARE
+  HAIRCARE
+  SUPPLEMENTS
+}
+
+enum Dosha {
+  VATA
+  PITTA
+  KAPHA
+}
+
+// ---------- Orders and payments ----------
+
+model Order {
+  id              String      @id @default(cuid())
+  number          String      @unique // human-friendly, e.g. AYU-24-000123
+  userId          String?
+  email           String
+  phone           String
+  shippingAddress Json
+  subtotalPaise   Int
+  shippingPaise   Int         @default(0)
+  totalPaise      Int
+  status          OrderStatus @default(PENDING_PAYMENT)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  user            User?       @relation(fields: [userId], references: [id])
+  items           OrderItem[]
+  payments        Payment[]
+
+  @@index([userId, createdAt])
+}
+
+enum OrderStatus {
+  PENDING_PAYMENT
+  PAID
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  REFUNDED
+}
+
+model OrderItem {
+  id         String  @id @default(cuid())
+  orderId    String
+  productId  String
+  name       String // snapshot at purchase time
+  pricePaise Int
+  quantity   Int
+  order      Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product    Product @relation(fields: [productId], references: [id])
+}
+
+// One table for product orders and consultation fees, keyed by the Razorpay order id.
+model Payment {
+  id                String        @id @default(cuid())
+  provider          String        @default("razorpay")
+  providerOrderId   String        @unique
+  providerPaymentId String?       @unique
+  amountPaise       Int
+  currency          String        @default("INR")
+  status            PaymentStatus @default(CREATED)
+  orderId           String?
+  appointmentId     String?       @unique
+  raw               Json?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  order             Order?        @relation(fields: [orderId], references: [id])
+  appointment       Appointment?  @relation(fields: [appointmentId], references: [id])
+}
+
+enum PaymentStatus {
+  CREATED
+  AUTHORIZED
+  CAPTURED
+  FAILED
+  REFUNDED
+}
+
+// ---------- Consultations ----------
+
+model Practitioner {
+  id             String             @id @default(cuid())
+  userId         String?            @unique
+  slug           String             @unique
+  title          String
+  specialty      Specialty
+  qualifications String
+  languages      String[]
+  bio            String?            @db.Text
+  feePaise       Int
+  active         Boolean            @default(true)
+  user           User?              @relation(fields: [userId], references: [id])
+  availability   AvailabilityRule[]
+  timeOff        TimeOff[]
+  appointments   Appointment[]
+}
+
+enum Specialty {
+  GENERAL
+  PANCHAKARMA
+  SKIN_HAIR
+  LIFESTYLE
+}
+
+// Weekly recurring hours in IST, e.g. Monday 10:00-13:00.
+model AvailabilityRule {
+  id             String       @id @default(cuid())
+  practitionerId String
+  weekday        Int // 0 = Sunday
+  startMinute    Int // minutes after midnight IST
+  endMinute      Int
+  slotMinutes    Int          @default(30)
+  practitioner   Practitioner @relation(fields: [practitionerId], references: [id], onDelete: Cascade)
+}
+
+model TimeOff {
+  id             String       @id @default(cuid())
+  practitionerId String
+  startsAt       DateTime
+  endsAt         DateTime
+  practitioner   Practitioner @relation(fields: [practitionerId], references: [id], onDelete: Cascade)
+}
+
+model Appointment {
+  id             String            @id @default(cuid())
+  practitionerId String
+  userId         String
+  startsAt       DateTime
+  endsAt         DateTime
+  status         AppointmentStatus @default(PENDING_PAYMENT)
+  concern        String?           @db.Text
+  meetingUrl     String?
+  calendarEvent  String? // Google Calendar event id
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  practitioner   Practitioner      @relation(fields: [practitionerId], references: [id])
+  user           User              @relation(fields: [userId], references: [id])
+  payment        Payment?
+
+  // A practitioner can't be double-booked for the same start time.
+  @@unique([practitionerId, startsAt])
+  @@index([userId, startsAt])
+}
+
+enum AppointmentStatus {
+  PENDING_PAYMENT
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}

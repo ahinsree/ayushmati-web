@@ -1,0 +1,226 @@
+# AI SDLC team on GitHub.
+#
+#   1. Add the label `ai-sdlc` to an issue      -> Product writes a spec      (comment on the issue)
+#   2. Comment `/approve`                        -> Architect writes a design  (comment on the issue)
+#   3. Comment `/approve`                        -> Developer, QA, Reviewer, DevOps build it -> pull request
+#   At gates 1 and 2 you can instead comment `/revise <what to change>`, or edit the bot's comment
+#   directly and then `/approve`. Gate 3 is the pull request: review and merge it yourself.
+#
+# Only the repo owner, members and collaborators can drive it. Installed by claude-team/install-github.sh.
+name: AI SDLC
+
+on:
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  id-token: write
+
+concurrency:
+  group: ai-sdlc-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+env:
+  # --- settings you may want to change -----------------------------------------------
+  TEST_COMMAND: npm test && npm run lint && npm run typecheck
+  MODEL: sonnet                       # orchestrator model; each agent's model is in .claude/agents/
+  ALLOWED_BASH: "Bash(npm run lint:*),Bash(npm run typecheck:*),Bash(npx next typegen:*),Bash(npm test:*),Bash(npm run test:*),Bash(go test:*),Bash(ls:*),Bash(cat:*),Bash(git diff:*),Bash(git status:*),Bash(git log:*)"
+  # -------------------------------------------------------------------------------------
+  ISSUE: ${{ github.event.issue.number }}
+  BASE_BRANCH: ${{ github.event.repository.default_branch }}
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  sdlc:
+    if: >-
+      !github.event.issue.pull_request && (
+        (github.event_name == 'issues' && github.event.label.name == 'ai-sdlc') ||
+        (github.event_name == 'issue_comment' &&
+         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
+         (startsWith(github.event.comment.body, '/approve') || startsWith(github.event.comment.body, '/revise'))))
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+
+      - name: Work out the stage
+        id: route
+        env:
+          EVENT: ${{ github.event_name }}
+          BODY: ${{ github.event.comment.body }}
+          LABELS: ${{ toJSON(github.event.issue.labels.*.name) }}
+        run: |
+          labels=$(jq -r '.[]' <<<"$LABELS")
+          has() { grep -qx "$1" <<<"$labels"; }
+          mkdir -p .ai-sdlc/out
+          echo ".ai-sdlc/" >> .git/info/exclude
+          stage=""
+          if [ "$EVENT" = issues ]; then
+            stage=spec
+          else
+            case "$BODY" in
+              /approve*)
+                if has sdlc:spec-review; then stage=design
+                elif has sdlc:design-review; then stage=build; fi ;;
+              /revise*)
+                printf '%s\n' "${BODY#/revise}" > .ai-sdlc/feedback.md
+                if has sdlc:spec-review; then stage=spec
+                elif has sdlc:design-review; then stage=design; fi ;;
+            esac
+          fi
+          echo "stage=$stage" >> "$GITHUB_OUTPUT"
+          if [ -z "$stage" ]; then
+            gh issue comment "$ISSUE" --body "AI SDLC: nothing to do. \`/approve\` and \`/revise\` work only while the issue has the \`sdlc:spec-review\` or \`sdlc:design-review\` label."
+          else
+            gh issue comment "$ISSUE" --body "AI SDLC: starting the **$stage** stage. [Follow the run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."
+          fi
+
+      - name: Prepare inputs
+        if: steps.route.outputs.stage != ''
+        run: |
+          for l in "sdlc:spec-review|1d76db" "sdlc:design-review|5319e7" "sdlc:pr-open|0e8a16" "sdlc:needs-help|d93f0b"; do
+            gh label create "${l%%|*}" --color "${l##*|}" --force >/dev/null
+          done
+          gh issue view "$ISSUE" --json title,body --jq '"# " + .title + "\n\n" + (.body // "")' | tr -d '\r' > .ai-sdlc/request.md
+          # Latest spec/design comment posted by this workflow (humans may have edited it).
+          fetch() {
+            gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/$ISSUE/comments" |
+              jq -r --arg m "<!-- ai-sdlc:$1 -->" \
+                '[.[][] | select(.user.login == "github-actions[bot]" and (.body | startswith($m)))] | last | .body // ""' |
+              tr -d '\r' | sed '1d; /<!-- ai-sdlc:end -->/,$d'
+          }
+          fetch spec > .ai-sdlc/spec.md
+          fetch design > .ai-sdlc/design.md
+          case "${{ steps.route.outputs.stage }}" in
+            design) [ -s .ai-sdlc/spec.md ] || { echo "No spec comment found"; exit 1; } ;;
+            build)  [ -s .ai-sdlc/spec.md ] && [ -s .ai-sdlc/design.md ] || { echo "No spec or design comment found"; exit 1; } ;;
+          esac
+          find .ai-sdlc -type f -empty -delete
+
+      # Dependencies so the tests can run. Adjust for your stack.
+      - uses: actions/setup-python@v5
+        if: steps.route.outputs.stage == 'build' && hashFiles('requirements.txt', 'pyproject.toml') != ''
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        if: steps.route.outputs.stage == 'build' && hashFiles('package.json') != ''
+        with:
+          node-version: "20"
+      - name: Install dependencies
+        if: steps.route.outputs.stage == 'build'
+        run: |
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f pyproject.toml ]; then pip install -e . || true; fi
+          if [ -f requirements.txt ] || [ -f pyproject.toml ]; then pip install pytest; fi
+          if [ -f package-lock.json ]; then npm ci; elif [ -f package.json ]; then npm install; fi
+
+      - name: Run the team
+        if: steps.route.outputs.stage != ''
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          prompt: |
+            You are the AI SDLC team's orchestrator for issue #${{ github.event.issue.number }} in ${{ github.repository }}.
+            Stage: ${{ steps.route.outputs.stage }}
+            Test command: ${{ env.TEST_COMMAND }}
+            Read .claude/skills/sdlc-github/SKILL.md and follow it for this stage exactly.
+          claude_args: |
+            --model ${{ env.MODEL }}
+            --max-turns ${{ steps.route.outputs.stage == 'build' && '200' || '40' }}
+            --allowedTools "Read,Write,Edit,Glob,Grep,Task,Agent,${{ env.ALLOWED_BASH }}"
+
+      - name: Publish spec or design
+        if: steps.route.outputs.stage == 'spec' || steps.route.outputs.stage == 'design'
+        env:
+          STAGE: ${{ steps.route.outputs.stage }}
+        run: |
+          out=.ai-sdlc/out/$STAGE.md
+          [ -s "$out" ] || { gh issue comment "$ISSUE" --body "AI SDLC: the $STAGE stage produced no output. Check the workflow run."; exit 1; }
+          if [ "$STAGE" = spec ]; then gate="Gate 1: spec"; next=design; else gate="Gate 2: design"; next="the build (code, tests, review, PR)"; fi
+          {
+            echo "<!-- ai-sdlc:$STAGE -->"
+            cat "$out"
+            echo
+            echo "<!-- ai-sdlc:end -->"
+            echo "---"
+            echo "**$gate.** Reply \`/approve\` to start $next, or \`/revise <what to change>\`. You can also edit this comment before approving; the next stage uses what's here."
+          } > .ai-sdlc/comment.md
+          gh issue comment "$ISSUE" --body-file .ai-sdlc/comment.md
+          gh issue edit "$ISSUE" --remove-label sdlc:spec-review --remove-label sdlc:design-review --remove-label sdlc:needs-help || true
+          gh issue edit "$ISSUE" --add-label "sdlc:$STAGE-review"
+
+      - name: Check, commit, push and open the pull request
+        if: steps.route.outputs.stage == 'build'
+        run: |
+          branch="ai/issue-$ISSUE"
+          # Objective check: run the tests ourselves.
+          if bash -c "$TEST_COMMAND" > .ai-sdlc/test-check.txt 2>&1; then suite=pass; else suite=fail; fi
+          status=$(cat .ai-sdlc/out/status 2>/dev/null || echo FAIL)
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --unset-all http.https://github.com/.extraheader || true
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git checkout -B "$branch"
+          git add -A
+          if git diff --cached --quiet; then
+            gh issue comment "$ISSUE" --body "AI SDLC: the build made no code changes. Check the workflow run."
+            gh issue edit "$ISSUE" --remove-label sdlc:design-review || true
+            gh issue edit "$ISSUE" --add-label sdlc:needs-help
+            exit 1
+          fi
+          git commit -q -m "ai-sdlc: implement #$ISSUE"
+          git push -f origin "$branch"
+
+          pr=.ai-sdlc/out/pr.md
+          title=$(head -n1 "$pr" 2>/dev/null | sed 's/^#* *//')
+          [ -n "$title" ] || title=$(gh issue view "$ISSUE" --json title --jq .title)
+          verdict=$(grep -oE 'VERDICT: *(APPROVE|CHANGES)' .ai-sdlc/out/review.md 2>/dev/null | tail -1 || true)
+          {
+            tail -n +2 "$pr" 2>/dev/null
+            echo
+            echo "## AI SDLC check"
+            echo "- Test suite (\`$TEST_COMMAND\`, run by the workflow): **$suite**"
+            echo "- QA / team status: **$status**"
+            echo "- Reviewer: **${verdict:-no verdict}**"
+            if [ -s .ai-sdlc/out/test-report.md ]; then
+              echo; echo "<details><summary>Test report</summary>"; echo; cat .ai-sdlc/out/test-report.md; echo; echo "</details>"
+            fi
+            if [ -s .ai-sdlc/out/review.md ]; then
+              echo; echo "<details><summary>Review</summary>"; echo; cat .ai-sdlc/out/review.md; echo; echo "</details>"
+            fi
+            echo; echo "Closes #$ISSUE"
+          } | head -c 60000 > .ai-sdlc/pr-body.md
+
+          draft=""
+          if [ "$suite" != pass ] || [ "$status" != PASS ]; then draft="--draft"; fi
+          num=$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$num" ]; then
+            gh pr edit "$num" --title "$title" --body-file .ai-sdlc/pr-body.md
+            url=$(gh pr view "$num" --json url --jq .url)
+          else
+            url=$(gh pr create --base "$BASE_BRANCH" --head "$branch" --title "$title" --body-file .ai-sdlc/pr-body.md $draft)
+          fi
+
+          gh issue edit "$ISSUE" --remove-label sdlc:design-review || true
+          if [ -z "$draft" ]; then
+            gh issue edit "$ISSUE" --add-label sdlc:pr-open
+            gh issue comment "$ISSUE" --body "AI SDLC: tests pass and the PR is ready for your review (gate 3): $url"
+          else
+            gh issue edit "$ISSUE" --add-label sdlc:needs-help
+            gh issue comment "$ISSUE" --body "AI SDLC: the team couldn't get everything passing. Draft PR with its progress: $url"
+          fi
+
+      - name: Report failure
+        if: failure() && steps.route.outputs.stage != ''
+        run: |
+          gh issue comment "$ISSUE" --body "AI SDLC: the **${{ steps.route.outputs.stage }}** stage failed. [Workflow logs]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."

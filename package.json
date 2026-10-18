@@ -1,0 +1,49 @@
+{
+  "name": "ayushmati-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.9"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "next typegen && tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.133",
+    "@ai-sdk/react": "^3.0.312",
+    "@prisma/client": "^6.19.3",
+    "ai": "^6.0.309",
+    "lucide-react": "^1.59.0",
+    "next": "^16.4.2",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@testing-library/jest-dom": "^6",
+    "@testing-library/react": "^16",
+    "@testing-library/user-event": "^14",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^5",
+    "eslint": "^9",
+    "eslint-config-next": "^16.4.2",
+    "jsdom": "^26.1.0",
+    "prisma": "^6.19.3",
+    "tailwindcss": "^4",
+    "typescript": "^5.9",
+    "vitest": "^4"
+  }
+}
