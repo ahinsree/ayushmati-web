@@ -11,6 +11,13 @@ vi.mock("next/image", () => ({
   default: ({ fill, priority, ...props }: Record<string, unknown>) => <img alt="" {...props} />,
 }));
 
+// Build day labels with the same formatter as the component: ICU output differs between Node versions
+// (e.g. "Friday 30 October" vs "Friday, 30 October").
+const dayFmt = new Intl.DateTimeFormat("en-IN", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" });
+const escape = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const dayName = (y: number, m: number, d: number, rest: string) =>
+  new RegExp(`^${escape(`${dayFmt.format(Date.UTC(y, m - 1, d))}, ${rest}`)}$`, "i");
+
 const DAYS = [
   { date: "2026-10-30", slots: ["2026-10-30T10:00:00+05:30", "2026-10-30T10:30:00+05:30"] },
   { date: "2026-11-02", slots: ["2026-11-02T15:00:00+05:30"] },
@@ -20,8 +27,8 @@ describe("SlotCalendar", () => {
   it("shows the month of the first open day, with only open days selectable", () => {
     render(<SlotCalendar days={DAYS} onSelect={() => {}} />);
     expect(screen.getByText("October 2026")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /friday 30 october, 2 times available/i })).toBeEnabled();
-    expect(screen.getByRole("button", { name: /saturday 31 october, unavailable/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: dayName(2026, 10, 30, "2 times available") })).toBeEnabled();
+    expect(screen.getByRole("button", { name: dayName(2026, 10, 31, "unavailable") })).toBeDisabled();
     expect(screen.getByRole("button", { name: /previous month/i })).toBeDisabled();
   });
 
@@ -31,7 +38,7 @@ describe("SlotCalendar", () => {
     await userEvent.click(screen.getByRole("button", { name: /next month/i }));
     expect(screen.getByText("November 2026")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /next month/i })).toBeDisabled();
-    await userEvent.click(screen.getByRole("button", { name: /monday 2 november, 1 time available/i }));
+    await userEvent.click(screen.getByRole("button", { name: dayName(2026, 11, 2, "1 time available") }));
     expect(onSelect).toHaveBeenCalledWith("2026-11-02");
   });
 
@@ -49,11 +56,8 @@ describe("BookingWidget in calendar mode", () => {
 
     const target = practitioners[0].days[3];
     const [y, m, d] = target.date.split("-").map(Number);
-    const label = new Intl.DateTimeFormat("en-IN", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" }).format(
-      Date.UTC(y, m - 1, d),
-    );
     if (m !== 10) await userEvent.click(screen.getByRole("button", { name: /next month/i }));
-    await userEvent.click(screen.getByRole("button", { name: new RegExp(`^${label},`) }));
+    await userEvent.click(screen.getByRole("button", { name: new RegExp(`^${escape(dayFmt.format(Date.UTC(y, m - 1, d)))},`) }));
 
     const timeButtons = screen.getAllByRole("button").filter((b) => /^\d{1,2}:\d\d\s?[ap]m$/i.test(b.textContent ?? ""));
     expect(timeButtons).toHaveLength(target.slots.length);
