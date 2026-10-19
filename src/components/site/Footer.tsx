@@ -10,7 +10,7 @@ export function Footer() {
       <div className="mx-auto grid max-w-6xl gap-10 px-4 py-14 sm:grid-cols-2 lg:grid-cols-5">
         <div className="lg:col-span-2">
           <Link href="/" aria-label="Ayushmati home" className="inline-block">
-            <Image src={asset("/logo-light.png")} alt="Ayushmati" width={562} height={192} className="h-14 w-auto" />
+            <Image src={asset("/logo-light.png")} alt="Ayushmati" width={392} height={152} className="h-12 w-auto" />
           </Link>
           <p className="mt-3 max-w-sm text-sm leading-relaxed text-leaf-100/80">
             A 5,000-year-old tradition of healing, crafted in-house and made for modern life.

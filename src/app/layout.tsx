@@ -21,7 +21,7 @@ export const metadata: Metadata = {
     title: SITE.name,
     description: SITE.description,
     locale: "en_IN",
-    images: [{ url: `${SITE.url}/logo.png`, width: 562, height: 192, alt: SITE.name }],
+    images: [{ url: `${SITE.url}/logo.png`, width: 392, height: 152, alt: SITE.name }],
   },
 };
 

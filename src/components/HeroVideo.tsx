@@ -22,6 +22,9 @@ import { Pause, Play, Volume2, VolumeX } from "lucide-react";
 
 const OVERSCAN = 1.12;
 const RATIO = 16 / 9;
+// YouTube draws its title bar (top) and logo strip (bottom) at a fixed pixel height, so small
+// players need at least this much cropped from each edge to hide them, whatever the size.
+const CHROME_PX = 44;
 
 type NetworkInformation = { saveData?: boolean; effectiveType?: string };
 
@@ -129,7 +132,10 @@ function hideCaptions(player: YTPlayer) {
   }
 }
 
-/** Size and offset of a 16:9 box covering width x height, positioned by a horizontal focal point. */
+/**
+ * Size and offset of a 16:9 box covering width x height, positioned by a horizontal focal point.
+ * It's enlarged by OVERSCAN, or more on small frames so at least CHROME_PX is hidden top and bottom.
+ */
 export function coverBox(width: number, height: number, focusX = 0.5) {
   let w = width;
   let h = width / RATIO;
@@ -137,8 +143,9 @@ export function coverBox(width: number, height: number, focusX = 0.5) {
     h = height;
     w = height * RATIO;
   }
-  w *= OVERSCAN;
-  h *= OVERSCAN;
+  const scale = Math.max(OVERSCAN, (h + 2 * CHROME_PX) / h);
+  w *= scale;
+  h *= scale;
   return { width: w, height: h, left: (width - w) * focusX, top: (height - h) / 2 };
 }
 
@@ -177,6 +184,7 @@ export function HeroVideo({
   children: React.ReactNode;
 }) {
   const sectionRef = useRef<HTMLElement>(null);
+  const frameRef = useRef<HTMLDivElement>(null);
   const mountA = useRef<HTMLDivElement>(null);
   const mountB = useRef<HTMLDivElement>(null);
   const ytRef = useRef<YTNamespace | null>(null);
@@ -286,9 +294,10 @@ export function HeroVideo({
     setEnabled(!prefersStillImage());
   }, []);
 
-  // Keep the players covering the hero at any size.
+  // Keep the players covering the film frame at any size. In landscape the frame is the whole
+  // hero; in portrait it's a full-width 16:9 band, so the film shows uncropped (no zoom).
   useEffect(() => {
-    const el = sectionRef.current;
+    const el = frameRef.current;
     if (!el) return;
     const update = () => setBox(coverBox(el.clientWidth, el.clientHeight, focusX));
     update();
@@ -524,9 +533,16 @@ export function HeroVideo({
   return (
     <section
       ref={sectionRef}
-      className="relative isolate flex h-svh min-h-[32rem] items-end overflow-hidden bg-forest-950 text-white landscape:max-lg:min-h-[24rem]"
+      className="relative isolate flex flex-col overflow-hidden bg-forest-950 text-white landscape:h-svh landscape:min-h-[32rem] landscape:justify-end landscape:max-lg:min-h-[24rem]"
     >
-      <div className="absolute inset-0" aria-hidden>
+      {/* Film frame. Landscape: full-bleed behind the copy. Portrait (phones, upright tablets): a
+          16:9 band under the header with the copy below, so the film isn't zoomed in to fill a
+          tall screen. */}
+      <div
+        ref={frameRef}
+        className="overflow-hidden landscape:absolute landscape:inset-0 portrait:relative portrait:mt-16 portrait:aspect-video portrait:w-full portrait:sm:mt-20"
+        aria-hidden
+      >
         <Image
           src={poster}
           alt=""
@@ -558,20 +574,18 @@ export function HeroVideo({
             />
           </div>
         )}
+        {/* Portrait: soften the film's lower edge into the green below. */}
+        <div className="absolute inset-x-0 bottom-0 h-1/4 bg-gradient-to-t from-forest-950/80 to-transparent landscape:hidden" />
       </div>
 
-      {/* Light scrims: top for the header, bottom-left for the copy. The centre of the film stays clear. */}
-      <div className="absolute inset-x-0 top-0 h-36 bg-gradient-to-b from-black/55 to-transparent" aria-hidden />
+      {/* Landscape scrims: top for the header, bottom-left for the copy. The centre of the film stays clear. */}
+      <div className="absolute inset-x-0 top-0 h-36 bg-gradient-to-b from-black/55 to-transparent portrait:hidden" aria-hidden />
       <div
-        className="absolute inset-x-0 bottom-0 h-3/5 bg-gradient-to-t from-forest-950/90 via-forest-950/45 to-transparent sm:hidden"
-        aria-hidden
-      />
-      <div
-        className="absolute inset-0 hidden bg-[radial-gradient(ellipse_at_0%_100%,rgb(20_38_12/0.85)_0%,rgb(20_38_12/0.45)_35%,transparent_65%)] sm:block"
+        className="absolute inset-0 hidden bg-[radial-gradient(ellipse_at_0%_100%,rgb(20_38_12/0.85)_0%,rgb(20_38_12/0.45)_35%,transparent_65%)] landscape:block"
         aria-hidden
       />
 
-      <div className="relative mx-auto w-full max-w-6xl px-4 pb-[max(2rem,env(safe-area-inset-bottom))] sm:pb-16">
+      <div className="relative mx-auto w-full max-w-6xl px-4 pb-[max(2rem,env(safe-area-inset-bottom))] portrait:pt-6 sm:pb-16">
         {children}
 
         <div data-hero-controls className="mt-4 flex flex-wrap items-center gap-2 sm:mt-6">

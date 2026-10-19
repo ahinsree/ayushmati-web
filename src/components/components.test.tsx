@@ -64,6 +64,13 @@ describe("coverBox", () => {
     expect(tall.width).toBeCloseTo(800 * (16 / 9) * 1.12);
     expect(tall.left).toBeCloseTo((400 - tall.width) * 0.65); // focal point shifts the crop
   });
+
+  it("crops at least 44px top and bottom on small frames, so YouTube's title bar stays hidden", () => {
+    const band = coverBox(390, 390 / (16 / 9)); // phone portrait: full-width 16:9 band
+    expect(band.height - 390 / (16 / 9)).toBeCloseTo(88);
+    expect(band.top).toBeCloseTo(-44);
+    expect(band.width / 390).toBeLessThan(1.5); // far less zoom than covering a tall screen (~3.2x)
+  });
 });
 
 describe("HeroVideo", () => {

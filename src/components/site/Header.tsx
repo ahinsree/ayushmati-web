@@ -52,10 +52,10 @@ export function Header() {
           <Image
             src={asset(overlay ? "/logo-light.png" : "/logo.png")}
             alt="Ayushmati"
-            width={562}
-            height={192}
+            width={392}
+            height={152}
             priority
-            className="h-10 w-auto sm:h-12"
+            className="h-8 w-auto sm:h-10"
           />
         </Link>
 
