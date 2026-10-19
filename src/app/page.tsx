@@ -44,7 +44,7 @@ export default function HomePage() {
 
       {/* Full-screen hero: the introductory film plays behind the header and copy.
           Short screens (phones in landscape) drop the badge and paragraph so the copy clears the header. */}
-      <HeroVideo id={SITE.introVideoId} start={SITE.introVideoStart} focusX={0.85} title="Discover Ayushmati">
+      <HeroVideo ids={SITE.heroVideoIds} focusX={0.85} title="Discover Ayushmati">
         <p className="inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1 text-xs font-semibold text-leaf-100 ring-1 ring-white/25 backdrop-blur sm:text-sm [@media(max-height:560px)]:hidden">
           <Leaf className="h-4 w-4" aria-hidden /> 5,000 years of Ayurveda
         </p>

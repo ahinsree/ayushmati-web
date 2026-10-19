@@ -21,7 +21,11 @@ class FakePlayer {
     public opts: {
       videoId: string;
       playerVars: Record<string, string | number>;
-      events: { onReady: (e: { target: FakePlayer }) => void; onStateChange: (e: { target: FakePlayer; data: number }) => void };
+      events: {
+        onReady: (e: { target: FakePlayer }) => void;
+        onStateChange: (e: { target: FakePlayer; data: number }) => void;
+        onApiChange: (e: { target: FakePlayer }) => void;
+      };
     },
   ) {
     FakePlayer.last = this;
@@ -32,6 +36,9 @@ class FakePlayer {
   mute() { this.calls.push("mute"); }
   unMute() { this.calls.push("unMute"); }
   setVolume(v: number) { this.calls.push(`volume:${v}`); }
+  loadVideoById(o: { videoId: string; startSeconds?: number }) { this.calls.push(`load:${o.videoId}@${o.startSeconds ?? 0}`); }
+  unloadModule(m: string) { this.calls.push(`unload:${m}`); }
+  setOption(m: string, o: string) { this.calls.push(`option:${m}.${o}`); }
   destroy() { this.calls.push("destroy"); }
 }
 const STATE = { ENDED: 0, PLAYING: 1, PAUSED: 2 };
@@ -71,7 +78,7 @@ describe("HeroVideo", () => {
 
   async function renderHero() {
     render(
-      <HeroVideo id="nwf_jNwNI4s" start={9} title="Intro">
+      <HeroVideo ids={["film-one", "film-two"]} start={9} title="Intro">
         <h1>Headline</h1>
       </HeroVideo>,
     );
@@ -90,9 +97,9 @@ describe("HeroVideo", () => {
     await renderHero();
     expect(screen.getByRole("heading", { name: "Headline" })).toBeInTheDocument();
     const p = ready();
-    expect(p.opts.videoId).toBe("nwf_jNwNI4s");
-    expect(p.opts.playerVars).toMatchObject({ autoplay: 1, mute: 1, controls: 0, start: 9, playsinline: 1 });
-    expect(p.calls).toEqual(["mute", "play"]);
+    expect(p.opts.videoId).toBe("film-one");
+    expect(p.opts.playerVars).toMatchObject({ autoplay: 1, mute: 1, controls: 0, start: 9, playsinline: 1, cc_load_policy: 0 });
+    expect(p.calls.filter((c) => c === "mute" || c === "play")).toEqual(["mute", "play"]);
     expect(screen.getByRole("button", { name: /sound on/i })).toHaveAttribute("aria-pressed", "false");
   });
 
@@ -128,14 +135,27 @@ describe("HeroVideo", () => {
     expect(screen.getByRole("button", { name: /sound on/i })).toBeInTheDocument();
   });
 
-  it("loops from the intro point and can be paused", async () => {
+  it("plays the films in order, loops back to the first, and can be paused", async () => {
     stubReducedMotion(false);
     await renderHero();
     const p = ready();
     act(() => p.opts.events.onStateChange({ target: p, data: STATE.ENDED }));
-    expect(p.calls.slice(-2)).toEqual(["seek:9", "play"]);
+    expect(p.calls.at(-1)).toBe("load:film-two@0");
+    act(() => p.opts.events.onStateChange({ target: p, data: STATE.ENDED }));
+    expect(p.calls.at(-1)).toBe("load:film-one@9");
     await userEvent.click(screen.getByRole("button", { name: /pause film/i }));
     expect(p.calls.at(-1)).toBe("pause");
+  });
+
+  it("keeps YouTube subtitles off", async () => {
+    stubReducedMotion(false);
+    await renderHero();
+    const p = ready();
+    expect(p.calls).toEqual(expect.arrayContaining(["unload:captions", "unload:cc", "option:captions.track"]));
+    p.calls = [];
+    act(() => p.opts.events.onApiChange({ target: p }));
+    act(() => p.opts.events.onStateChange({ target: p, data: STATE.PLAYING }));
+    expect(p.calls.filter((c) => c === "unload:captions")).toHaveLength(2);
   });
 
   it("shows the still image on Data Saver or slow connections until the visitor presses play", async () => {

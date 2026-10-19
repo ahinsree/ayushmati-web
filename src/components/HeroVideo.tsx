@@ -4,7 +4,7 @@ import Image from "next/image";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Pause, Play, Volume2, VolumeX } from "lucide-react";
 
-// Full-screen hero film driven by the YouTube IFrame Player API.
+// Full-screen hero films driven by the YouTube IFrame Player API, played in sequence and looped.
 //
 // Sound: browsers only allow audible autoplay after the visitor has interacted with the page.
 // The film starts muted (always allowed), switches sound on at once when the visitor already
@@ -49,7 +49,11 @@ type YTPlayer = {
   mute(): void;
   unMute(): void;
   setVolume(volume: number): void;
+  loadVideoById(options: { videoId: string; startSeconds?: number }): void;
   getIframe?(): HTMLIFrameElement;
+  // Undocumented but long-standing player methods, used here only to switch captions off.
+  unloadModule?(module: string): void;
+  setOption?(module: string, option: string, value: unknown): void;
   destroy(): void;
 };
 
@@ -64,7 +68,11 @@ type YTNamespace = {
       width?: string;
       height?: string;
       playerVars?: Record<string, string | number>;
-      events?: { onReady?: (e: YTEvent) => void; onStateChange?: (e: YTEvent) => void };
+      events?: {
+        onReady?: (e: YTEvent) => void;
+        onStateChange?: (e: YTEvent) => void;
+        onApiChange?: (e: YTEvent) => void;
+      };
     },
   ) => YTPlayer;
   PlayerState: { ENDED: number; PLAYING: number; PAUSED: number };
@@ -99,6 +107,22 @@ function loadYouTubeApi(): Promise<YTNamespace> {
   return apiPromise;
 }
 
+/**
+ * Keeps subtitles off. cc_load_policy=0 only asks YouTube not to show them, and viewers' own
+ * caption preferences can still turn them on, so the captions module is also unloaded whenever
+ * playback starts or YouTube (re)loads its modules. Visitors can't turn them back on because
+ * YouTube's controls are hidden.
+ */
+function hideCaptions(player: YTPlayer) {
+  try {
+    player.unloadModule?.("captions");
+    player.unloadModule?.("cc");
+    player.setOption?.("captions", "track", {});
+  } catch {
+    // Not available on this player version; cc_load_policy still applies.
+  }
+}
+
 /** Size and offset of a 16:9 box covering width x height, positioned by a horizontal focal point. */
 export function coverBox(width: number, height: number, focusX = 0.5) {
   let w = width;
@@ -113,14 +137,16 @@ export function coverBox(width: number, height: number, focusX = 0.5) {
 }
 
 export function HeroVideo({
-  id,
+  ids,
   title,
   start = 0,
   focusX = 0.5,
   children,
 }: {
-  id: string;
+  /** YouTube video IDs, played one after another and then looped. The first one's still is the poster. */
+  ids: readonly string[];
   title: string;
+  /** Where the first film starts, in seconds. */
   start?: number;
   /** Horizontal focal point of the film, 0 = left edge, 1 = right edge. */
   focusX?: number;
@@ -134,12 +160,15 @@ export function HeroVideo({
   const autoPausedRef = useRef(false); // paused by us: scrolled away or tab hidden
   const inViewRef = useRef(true);
   const mutedRef = useRef(true);
+  const indexRef = useRef(0); // which film in `ids` is playing
+  const idsKey = ids.join(",");
 
   const [enabled, setEnabled] = useState(false); // false until we know motion is OK, or the visitor presses play
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(true);
   const [box, setBox] = useState<ReturnType<typeof coverBox>>();
-  const [poster, setPoster] = useState(`https://i.ytimg.com/vi/${id}/maxresdefault.jpg`);
+  const firstId = ids[0];
+  const [poster, setPoster] = useState(`https://i.ytimg.com/vi/${firstId}/maxresdefault.jpg`);
 
   const unmute = useCallback(() => {
     const player = playerRef.current;
@@ -186,9 +215,11 @@ export function HeroVideo({
       loadYouTubeApi()
         .then((YT) => {
           if (cancelled) return;
+          const playlist = idsKey.split(",");
+          indexRef.current = 0;
           playerRef.current = new YT.Player(mountEl, {
             host: "https://www.youtube-nocookie.com",
-            videoId: id,
+            videoId: playlist[0],
             width: "100%",
             height: "100%",
             playerVars: {
@@ -200,27 +231,39 @@ export function HeroVideo({
               playsinline: 1,
               rel: 0,
               iv_load_policy: 3,
+              cc_load_policy: 0,
               modestbranding: 1,
               start,
             },
             events: {
+              onApiChange: ({ target }) => hideCaptions(target),
               onReady: ({ target }) => {
                 const iframe = target.getIframe?.();
                 if (iframe) {
                   iframe.title = title;
                   iframe.tabIndex = -1;
                 }
+                hideCaptions(target);
                 target.mute();
                 target.playVideo();
                 // Sound straight away if the browser will allow it.
                 if (navigator.userActivation?.hasBeenActive && !userMutedRef.current) unmute();
               },
               onStateChange: ({ target, data }) => {
-                if (data === YT.PlayerState.PLAYING) setPlaying(true);
+                if (data === YT.PlayerState.PLAYING) {
+                  setPlaying(true);
+                  hideCaptions(target);
+                }
                 if (data === YT.PlayerState.ENDED) {
-                  // Loop from the intro point rather than from 0:00.
-                  target.seekTo(start, true);
-                  target.playVideo();
+                  // Next film; after the last one, back to the first (from `start`).
+                  const next = (indexRef.current + 1) % playlist.length;
+                  indexRef.current = next;
+                  if (playlist.length === 1) {
+                    target.seekTo(start, true);
+                    target.playVideo();
+                  } else {
+                    target.loadVideoById({ videoId: playlist[next], startSeconds: next === 0 ? start : 0 });
+                  }
                 }
                 if (data === YT.PlayerState.PAUSED) {
                   setPlaying(false);
@@ -249,7 +292,7 @@ export function HeroVideo({
       playerRef.current = null;
       host.replaceChildren();
     };
-  }, [enabled, id, start, title, unmute]);
+  }, [enabled, idsKey, start, title, unmute]);
 
   // Turn sound on with the visitor's first interaction anywhere on the page.
   useEffect(() => {
@@ -345,7 +388,7 @@ export function HeroVideo({
           fill
           priority
           sizes="100vw"
-          onError={() => setPoster(`https://i.ytimg.com/vi/${id}/hqdefault.jpg`)}
+          onError={() => setPoster(`https://i.ytimg.com/vi/${firstId}/hqdefault.jpg`)}
           className="object-cover"
           style={{ objectPosition: `${focusX * 100}% 50%` }}
         />

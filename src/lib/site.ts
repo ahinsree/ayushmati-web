@@ -5,8 +5,12 @@ export const SITE = {
   description:
     "Authentic Ayurveda for modern wellness: in-house Ayurvedic medicines, herbal skincare and hair care, and online consultations with expert doctors.",
   url: process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000",
-  introVideoId: "nwf_jNwNI4s",
-  introVideoStart: 0, // play the whole film, then loop from the beginning
+  /**
+   * Hero films, played in order and then looped (YouTube IDs, both from Kerala Tourism's channel):
+   * "Come to Kerala - Experience the ancient way of healing" and "Ayurveda - Art of Healing"
+   * (https://www.keralatourism.org/ayurveda/video-gallery/ayurveda-art/1088).
+   */
+  heroVideoIds: ["nwf_jNwNI4s", "YK9g9KMVs0M"],
   /** True in the static GitHub Pages demo, where there is no server for the AI assistant. */
   staticDemo: process.env.NEXT_PUBLIC_STATIC_DEMO === "1",
 };
