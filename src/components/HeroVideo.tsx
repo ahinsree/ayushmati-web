@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pause, Play, Volume2, VolumeX } from "lucide-react";
 
 // Full-screen hero films driven by the YouTube IFrame Player API, played in sequence and looped.
@@ -49,7 +49,8 @@ type YTPlayer = {
   mute(): void;
   unMute(): void;
   setVolume(volume: number): void;
-  loadVideoById(options: { videoId: string; startSeconds?: number }): void;
+  loadVideoById(options: { videoId: string; startSeconds?: number; endSeconds?: number }): void;
+  getCurrentTime(): number;
   getIframe?(): HTMLIFrameElement;
   // Undocumented but long-standing player methods, used here only to switch captions off.
   unloadModule?(module: string): void;
@@ -136,20 +137,29 @@ export function coverBox(width: number, height: number, focusX = 0.5) {
   return { width: w, height: h, left: (width - w) * focusX, top: (height - h) / 2 };
 }
 
-export type HeroFilm = { id: string; label: string };
+export type HeroFilm = {
+  id: string;
+  label: string;
+  /** Seconds to start from (default 0). */
+  start?: number;
+  /** Seconds to stop at and move on to the next film, e.g. to leave out closing credits. */
+  end?: number;
+};
+
+/** loadVideoById options for a film, honouring its start and end times. */
+function filmOptions(film: HeroFilm) {
+  return { videoId: film.id, startSeconds: film.start ?? 0, ...(film.end ? { endSeconds: film.end } : {}) };
+}
 
 export function HeroVideo({
   films,
   title,
-  start = 0,
   focusX = 0.5,
   children,
 }: {
   /** YouTube films, played one after another and then looped; each also gets a button to jump to it. */
   films: readonly HeroFilm[];
   title: string;
-  /** Where the first film starts, in seconds. */
-  start?: number;
   /** Horizontal focal point of the film, 0 = left edge, 1 = right edge. */
   focusX?: number;
   children: React.ReactNode;
@@ -163,14 +173,16 @@ export function HeroVideo({
   const inViewRef = useRef(true);
   const mutedRef = useRef(true);
   const indexRef = useRef(0); // which film in `films` is playing (or should start)
-  const idsKey = films.map((f) => f.id).join(",");
+  // Stable copy of `films`, so a new array with the same contents doesn't recreate the player.
+  const filmsKey = JSON.stringify(films);
+  const playlist = useMemo(() => JSON.parse(filmsKey) as HeroFilm[], [filmsKey]);
 
   const [enabled, setEnabled] = useState(false); // false until we know motion is OK, or the visitor presses play
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(true);
   const [box, setBox] = useState<ReturnType<typeof coverBox>>();
   const [current, setCurrent] = useState(0);
-  const firstId = films[0]?.id;
+  const firstId = playlist[0]?.id;
   const [poster, setPoster] = useState(`https://i.ytimg.com/vi/${firstId}/maxresdefault.jpg`);
 
   const unmute = useCallback(() => {
@@ -181,6 +193,22 @@ export function HeroVideo({
     mutedRef.current = false;
     setMuted(false);
   }, []);
+
+  /** Moves to the next film (looping), or replays a single film from its start. */
+  const advance = useCallback(
+    (player: YTPlayer) => {
+      const next = (indexRef.current + 1) % playlist.length;
+      indexRef.current = next;
+      setCurrent(next);
+      if (playlist.length === 1) {
+        player.seekTo(playlist[0].start ?? 0, true);
+        player.playVideo();
+      } else {
+        player.loadVideoById(filmOptions(playlist[next]));
+      }
+    },
+    [playlist],
+  );
 
   const mute = useCallback(() => {
     playerRef.current?.mute();
@@ -218,11 +246,10 @@ export function HeroVideo({
       loadYouTubeApi()
         .then((YT) => {
           if (cancelled) return;
-          const playlist = idsKey.split(",");
-          const first = indexRef.current;
+          const film = playlist[indexRef.current];
           playerRef.current = new YT.Player(mountEl, {
             host: "https://www.youtube-nocookie.com",
-            videoId: playlist[first],
+            videoId: film.id,
             width: "100%",
             height: "100%",
             playerVars: {
@@ -236,7 +263,8 @@ export function HeroVideo({
               iv_load_policy: 3,
               cc_load_policy: 0,
               modestbranding: 1,
-              start: first === 0 ? start : 0,
+              start: film.start ?? 0,
+              ...(film.end ? { end: film.end } : {}),
             },
             events: {
               onApiChange: ({ target }) => hideCaptions(target),
@@ -257,18 +285,8 @@ export function HeroVideo({
                   setPlaying(true);
                   hideCaptions(target);
                 }
-                if (data === YT.PlayerState.ENDED) {
-                  // Next film; after the last one, back to the first (from `start`).
-                  const next = (indexRef.current + 1) % playlist.length;
-                  indexRef.current = next;
-                  setCurrent(next);
-                  if (playlist.length === 1) {
-                    target.seekTo(start, true);
-                    target.playVideo();
-                  } else {
-                    target.loadVideoById({ videoId: playlist[next], startSeconds: next === 0 ? start : 0 });
-                  }
-                }
+                // Reaching a film's end (or its `end` time) moves on to the next film.
+                if (data === YT.PlayerState.ENDED) advance(target);
                 if (data === YT.PlayerState.PAUSED) {
                   setPlaying(false);
                   // A pause we didn't ask for while unmuted means the browser blocked sound:
@@ -296,7 +314,19 @@ export function HeroVideo({
       playerRef.current = null;
       host.replaceChildren();
     };
-  }, [enabled, idsKey, start, title, unmute]);
+  }, [enabled, playlist, title, unmute, advance]);
+
+  // Backstop for `end` times: if the player plays past a film's end (it doesn't always stop
+  // exactly), move on as soon as the position passes it.
+  useEffect(() => {
+    if (!playing) return;
+    const timer = window.setInterval(() => {
+      const player = playerRef.current;
+      const end = playlist[indexRef.current]?.end;
+      if (player && end && player.getCurrentTime() >= end - 0.25) advance(player);
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [playing, playlist, advance]);
 
   // Turn sound on with the visitor's first interaction anywhere on the page.
   useEffect(() => {
@@ -374,7 +404,7 @@ export function HeroVideo({
       setEnabled(true);
       return;
     }
-    player?.loadVideoById({ videoId: films[index].id, startSeconds: index === 0 ? start : 0 });
+    player?.loadVideoById(filmOptions(playlist[index]));
   }
 
   function togglePlay() {

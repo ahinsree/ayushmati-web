@@ -36,15 +36,19 @@ class FakePlayer {
   mute() { this.calls.push("mute"); }
   unMute() { this.calls.push("unMute"); }
   setVolume(v: number) { this.calls.push(`volume:${v}`); }
-  loadVideoById(o: { videoId: string; startSeconds?: number }) { this.calls.push(`load:${o.videoId}@${o.startSeconds ?? 0}`); }
+  time = 0;
+  getCurrentTime() { return this.time; }
+  loadVideoById(o: { videoId: string; startSeconds?: number; endSeconds?: number }) {
+    this.calls.push(`load:${o.videoId}@${o.startSeconds ?? 0}-${o.endSeconds ?? "end"}`);
+  }
   unloadModule(m: string) { this.calls.push(`unload:${m}`); }
   setOption(m: string, o: string) { this.calls.push(`option:${m}.${o}`); }
   destroy() { this.calls.push("destroy"); }
 }
 const STATE = { ENDED: 0, PLAYING: 1, PAUSED: 2 };
 const FILMS = [
-  { id: "film-one", label: "Ancient way of healing" },
-  { id: "film-two", label: "Art of healing" },
+  { id: "film-one", label: "Ancient way of healing", start: 9, end: 64 },
+  { id: "film-two", label: "Art of healing", end: 452 },
 ];
 
 describe("coverBox", () => {
@@ -82,7 +86,7 @@ describe("HeroVideo", () => {
 
   async function renderHero() {
     render(
-      <HeroVideo films={FILMS} start={9} title="Intro">
+      <HeroVideo films={FILMS} title="Intro">
         <h1>Headline</h1>
       </HeroVideo>,
     );
@@ -102,7 +106,7 @@ describe("HeroVideo", () => {
     expect(screen.getByRole("heading", { name: "Headline" })).toBeInTheDocument();
     const p = ready();
     expect(p.opts.videoId).toBe("film-one");
-    expect(p.opts.playerVars).toMatchObject({ autoplay: 1, mute: 1, controls: 0, start: 9, playsinline: 1, cc_load_policy: 0 });
+    expect(p.opts.playerVars).toMatchObject({ autoplay: 1, mute: 1, controls: 0, start: 9, end: 64, playsinline: 1, cc_load_policy: 0 });
     expect(p.calls.filter((c) => c === "mute" || c === "play")).toEqual(["mute", "play"]);
     expect(screen.getByRole("button", { name: /sound on/i })).toHaveAttribute("aria-pressed", "false");
   });
@@ -144,9 +148,9 @@ describe("HeroVideo", () => {
     await renderHero();
     const p = ready();
     act(() => p.opts.events.onStateChange({ target: p, data: STATE.ENDED }));
-    expect(p.calls.at(-1)).toBe("load:film-two@0");
+    expect(p.calls.at(-1)).toBe("load:film-two@0-452");
     act(() => p.opts.events.onStateChange({ target: p, data: STATE.ENDED }));
-    expect(p.calls.at(-1)).toBe("load:film-one@9");
+    expect(p.calls.at(-1)).toBe("load:film-one@9-64");
     await userEvent.click(screen.getByRole("button", { name: /pause film/i }));
     expect(p.calls.at(-1)).toBe("pause");
   });
@@ -160,12 +164,12 @@ describe("HeroVideo", () => {
     expect(one).toHaveAttribute("aria-pressed", "true");
 
     await userEvent.click(two);
-    expect(p.calls.at(-1)).toBe("load:film-two@0");
+    expect(p.calls.at(-1)).toBe("load:film-two@0-452");
     expect(two).toHaveAttribute("aria-pressed", "true");
     expect(p.calls).not.toContain("unMute"); // choosing a film doesn't switch sound on by itself
 
     act(() => p.opts.events.onStateChange({ target: p, data: STATE.ENDED }));
-    expect(p.calls.at(-1)).toBe("load:film-one@9"); // the sequence carries on from the chosen film
+    expect(p.calls.at(-1)).toBe("load:film-one@9-64"); // the sequence carries on from the chosen film
     expect(one).toHaveAttribute("aria-pressed", "true");
   });
 
@@ -176,6 +180,28 @@ describe("HeroVideo", () => {
     await act(async () => {});
     expect(FakePlayer.last?.opts.videoId).toBe("film-two");
     expect(FakePlayer.last?.opts.playerVars.start).toBe(0);
+  });
+
+  it("moves on when a film passes its end time, even if YouTube doesn't stop exactly", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      stubReducedMotion(false);
+      await renderHero();
+      const p = ready();
+      p.time = 30;
+      act(() => {
+        vi.advanceTimersByTime(600);
+      });
+      expect(p.calls.some((c) => c.startsWith("load:"))).toBe(false);
+      p.time = 63.9;
+      act(() => {
+        vi.advanceTimersByTime(600);
+      });
+      expect(p.calls.at(-1)).toBe("load:film-two@0-452");
+      expect(screen.getByRole("button", { name: /art of healing/i })).toHaveAttribute("aria-pressed", "true");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps YouTube subtitles off", async () => {
