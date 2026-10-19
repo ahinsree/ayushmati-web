@@ -10,7 +10,10 @@ export const SITE = {
    * "Come to Kerala - Experience the ancient way of healing" and "Ayurveda - Art of Healing"
    * (https://www.keralatourism.org/ayurveda/video-gallery/ayurveda-art/1088).
    */
-  heroVideoIds: ["nwf_jNwNI4s", "YK9g9KMVs0M"],
+  heroFilms: [
+    { id: "nwf_jNwNI4s", label: "Ancient way of healing" },
+    { id: "YK9g9KMVs0M", label: "Art of healing" },
+  ],
   /** True in the static GitHub Pages demo, where there is no server for the AI assistant. */
   staticDemo: process.env.NEXT_PUBLIC_STATIC_DEMO === "1",
 };

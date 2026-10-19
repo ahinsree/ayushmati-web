@@ -136,15 +136,17 @@ export function coverBox(width: number, height: number, focusX = 0.5) {
   return { width: w, height: h, left: (width - w) * focusX, top: (height - h) / 2 };
 }
 
+export type HeroFilm = { id: string; label: string };
+
 export function HeroVideo({
-  ids,
+  films,
   title,
   start = 0,
   focusX = 0.5,
   children,
 }: {
-  /** YouTube video IDs, played one after another and then looped. The first one's still is the poster. */
-  ids: readonly string[];
+  /** YouTube films, played one after another and then looped; each also gets a button to jump to it. */
+  films: readonly HeroFilm[];
   title: string;
   /** Where the first film starts, in seconds. */
   start?: number;
@@ -160,14 +162,15 @@ export function HeroVideo({
   const autoPausedRef = useRef(false); // paused by us: scrolled away or tab hidden
   const inViewRef = useRef(true);
   const mutedRef = useRef(true);
-  const indexRef = useRef(0); // which film in `ids` is playing
-  const idsKey = ids.join(",");
+  const indexRef = useRef(0); // which film in `films` is playing (or should start)
+  const idsKey = films.map((f) => f.id).join(",");
 
   const [enabled, setEnabled] = useState(false); // false until we know motion is OK, or the visitor presses play
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(true);
   const [box, setBox] = useState<ReturnType<typeof coverBox>>();
-  const firstId = ids[0];
+  const [current, setCurrent] = useState(0);
+  const firstId = films[0]?.id;
   const [poster, setPoster] = useState(`https://i.ytimg.com/vi/${firstId}/maxresdefault.jpg`);
 
   const unmute = useCallback(() => {
@@ -216,10 +219,10 @@ export function HeroVideo({
         .then((YT) => {
           if (cancelled) return;
           const playlist = idsKey.split(",");
-          indexRef.current = 0;
+          const first = indexRef.current;
           playerRef.current = new YT.Player(mountEl, {
             host: "https://www.youtube-nocookie.com",
-            videoId: playlist[0],
+            videoId: playlist[first],
             width: "100%",
             height: "100%",
             playerVars: {
@@ -233,7 +236,7 @@ export function HeroVideo({
               iv_load_policy: 3,
               cc_load_policy: 0,
               modestbranding: 1,
-              start,
+              start: first === 0 ? start : 0,
             },
             events: {
               onApiChange: ({ target }) => hideCaptions(target),
@@ -258,6 +261,7 @@ export function HeroVideo({
                   // Next film; after the last one, back to the first (from `start`).
                   const next = (indexRef.current + 1) % playlist.length;
                   indexRef.current = next;
+                  setCurrent(next);
                   if (playlist.length === 1) {
                     target.seekTo(start, true);
                     target.playVideo();
@@ -359,6 +363,20 @@ export function HeroVideo({
     }
   }
 
+  /** Jumps to a film from its button; if the film isn't running yet (still image), starts it. */
+  function selectFilm(index: number) {
+    indexRef.current = index;
+    setCurrent(index);
+    userPausedRef.current = false;
+    autoPausedRef.current = false;
+    const player = playerRef.current;
+    if (!enabled) {
+      setEnabled(true);
+      return;
+    }
+    player?.loadVideoById({ videoId: films[index].id, startSeconds: index === 0 ? start : 0 });
+  }
+
   function togglePlay() {
     if (!enabled) {
       setEnabled(true);
@@ -417,7 +435,7 @@ export function HeroVideo({
       <div className="relative mx-auto w-full max-w-6xl px-4 pb-[max(2rem,env(safe-area-inset-bottom))] sm:pb-16">
         {children}
 
-        <div data-hero-controls className="mt-4 flex items-center gap-2 sm:mt-6">
+        <div data-hero-controls className="mt-4 flex flex-wrap items-center gap-2 sm:mt-6">
           <button
             type="button"
             onClick={toggleSound}
@@ -441,6 +459,30 @@ export function HeroVideo({
           >
             {playing ? <Pause className="h-4 w-4 fill-current" aria-hidden /> : <Play className="ml-0.5 h-4 w-4 fill-current" aria-hidden />}
           </button>
+
+          {films.length > 1 && (
+            <div role="group" aria-label="Choose a film" className="flex flex-wrap gap-2">
+              {films.map((film, i) => (
+                <button
+                  key={film.id}
+                  type="button"
+                  onClick={() => selectFilm(i)}
+                  aria-pressed={i === current}
+                  className="inline-flex h-11 items-center gap-2 rounded-full bg-white/15 pl-1.5 pr-4 text-sm font-semibold ring-1 ring-white/40 backdrop-blur transition hover:bg-white/25 aria-pressed:bg-white aria-pressed:text-forest-900"
+                >
+                  <span
+                    className={`grid h-8 w-8 place-items-center rounded-full text-xs font-bold ${
+                      i === current ? "bg-forest-700 text-white" : "bg-white/20"
+                    }`}
+                    aria-hidden
+                  >
+                    {i + 1}
+                  </span>
+                  {film.label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </section>

@@ -42,6 +42,10 @@ class FakePlayer {
   destroy() { this.calls.push("destroy"); }
 }
 const STATE = { ENDED: 0, PLAYING: 1, PAUSED: 2 };
+const FILMS = [
+  { id: "film-one", label: "Ancient way of healing" },
+  { id: "film-two", label: "Art of healing" },
+];
 
 describe("coverBox", () => {
   it("covers wide and tall containers with a 16:9 box plus overscan", () => {
@@ -78,7 +82,7 @@ describe("HeroVideo", () => {
 
   async function renderHero() {
     render(
-      <HeroVideo ids={["film-one", "film-two"]} start={9} title="Intro">
+      <HeroVideo films={FILMS} start={9} title="Intro">
         <h1>Headline</h1>
       </HeroVideo>,
     );
@@ -145,6 +149,33 @@ describe("HeroVideo", () => {
     expect(p.calls.at(-1)).toBe("load:film-one@9");
     await userEvent.click(screen.getByRole("button", { name: /pause film/i }));
     expect(p.calls.at(-1)).toBe("pause");
+  });
+
+  it("has a button for each film that jumps to it and shows which one is playing", async () => {
+    stubReducedMotion(false);
+    await renderHero();
+    const p = ready();
+    const one = screen.getByRole("button", { name: /ancient way of healing/i });
+    const two = screen.getByRole("button", { name: /art of healing/i });
+    expect(one).toHaveAttribute("aria-pressed", "true");
+
+    await userEvent.click(two);
+    expect(p.calls.at(-1)).toBe("load:film-two@0");
+    expect(two).toHaveAttribute("aria-pressed", "true");
+    expect(p.calls).not.toContain("unMute"); // choosing a film doesn't switch sound on by itself
+
+    act(() => p.opts.events.onStateChange({ target: p, data: STATE.ENDED }));
+    expect(p.calls.at(-1)).toBe("load:film-one@9"); // the sequence carries on from the chosen film
+    expect(one).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("starts the chosen film when it was showing the still image", async () => {
+    stubReducedMotion(true);
+    await renderHero();
+    await userEvent.click(screen.getByRole("button", { name: /art of healing/i }));
+    await act(async () => {});
+    expect(FakePlayer.last?.opts.videoId).toBe("film-two");
+    expect(FakePlayer.last?.opts.playerVars.start).toBe(0);
   });
 
   it("keeps YouTube subtitles off", async () => {
