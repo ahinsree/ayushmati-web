@@ -6,6 +6,10 @@ import { Pause, Play, Volume2, VolumeX } from "lucide-react";
 
 // Full-screen hero films driven by the YouTube IFrame Player API, played in sequence and looped.
 //
+// Seamless sequence: two players are stacked. While one plays, the other preloads the next film
+// and waits on its first frame; just before the end, it starts and cross-fades in, so there is no
+// loading pause between films.
+//
 // Sound: browsers only allow audible autoplay after the visitor has interacted with the page.
 // The film starts muted (always allowed), switches sound on at once when the visitor already
 // interacted (e.g. arrived from another page of the site), and otherwise on their first tap,
@@ -51,6 +55,7 @@ type YTPlayer = {
   setVolume(volume: number): void;
   loadVideoById(options: { videoId: string; startSeconds?: number; endSeconds?: number }): void;
   getCurrentTime(): number;
+  getDuration?(): number;
   getIframe?(): HTMLIFrameElement;
   // Undocumented but long-standing player methods, used here only to switch captions off.
   unloadModule?(module: string): void;
@@ -146,6 +151,13 @@ export type HeroFilm = {
   end?: number;
 };
 
+/** Cross-fade between the two players, and how early (seconds before the end) to start it. */
+const CROSSFADE_MS = 500;
+const HANDOVER_LEAD_S = 0.4;
+
+type Slot = { player: YTPlayer | null; filmIndex: number; priming: boolean; primed: boolean };
+const emptySlot = (): Slot => ({ player: null, filmIndex: -1, priming: false, primed: false });
+
 /** loadVideoById options for a film, honouring its start and end times. */
 function filmOptions(film: HeroFilm) {
   return { videoId: film.id, startSeconds: film.start ?? 0, ...(film.end ? { endSeconds: film.end } : {}) };
@@ -165,15 +177,20 @@ export function HeroVideo({
   children: React.ReactNode;
 }) {
   const sectionRef = useRef<HTMLElement>(null);
-  const mountRef = useRef<HTMLDivElement>(null);
-  const playerRef = useRef<YTPlayer | null>(null);
+  const mountA = useRef<HTMLDivElement>(null);
+  const mountB = useRef<HTMLDivElement>(null);
+  const ytRef = useRef<YTNamespace | null>(null);
+  // Two stacked players: the active one is on screen, the other preloads the next film.
+  const slotsRef = useRef<[Slot, Slot]>([emptySlot(), emptySlot()]);
+  const activeRef = useRef<0 | 1>(0);
+  const switchingRef = useRef(false); // true during a hand-over between players
   const userMutedRef = useRef(false);
   const userPausedRef = useRef(false);
   const autoPausedRef = useRef(false); // paused by us: scrolled away or tab hidden
   const inViewRef = useRef(true);
   const mutedRef = useRef(true);
   const indexRef = useRef(0); // which film in `films` is playing (or should start)
-  // Stable copy of `films`, so a new array with the same contents doesn't recreate the player.
+  // Stable copy of `films`, so a new array with the same contents doesn't recreate the players.
   const filmsKey = JSON.stringify(films);
   const playlist = useMemo(() => JSON.parse(filmsKey) as HeroFilm[], [filmsKey]);
 
@@ -182,11 +199,14 @@ export function HeroVideo({
   const [muted, setMuted] = useState(true);
   const [box, setBox] = useState<ReturnType<typeof coverBox>>();
   const [current, setCurrent] = useState(0);
+  const [activeSlot, setActiveSlot] = useState<0 | 1>(0);
   const firstId = playlist[0]?.id;
   const [poster, setPoster] = useState(`https://i.ytimg.com/vi/${firstId}/maxresdefault.jpg`);
 
+  const activePlayer = () => slotsRef.current[activeRef.current].player;
+
   const unmute = useCallback(() => {
-    const player = playerRef.current;
+    const player = slotsRef.current[activeRef.current].player;
     if (!player) return;
     player.unMute();
     player.setVolume(100);
@@ -194,27 +214,71 @@ export function HeroVideo({
     setMuted(false);
   }, []);
 
-  /** Moves to the next film (looping), or replays a single film from its start. */
-  const advance = useCallback(
-    (player: YTPlayer) => {
-      const next = (indexRef.current + 1) % playlist.length;
-      indexRef.current = next;
-      setCurrent(next);
-      if (playlist.length === 1) {
-        player.seekTo(playlist[0].start ?? 0, true);
-        player.playVideo();
-      } else {
-        player.loadVideoById(filmOptions(playlist[next]));
-      }
+  const mute = useCallback(() => {
+    slotsRef.current[activeRef.current].player?.mute();
+    mutedRef.current = true;
+    setMuted(true);
+  }, []);
+
+  /** Loads a film into a background slot, muted, and parks it on its first frame (see onStateChange). */
+  const prime = useCallback(
+    (slot: Slot, filmIndex: number) => {
+      slot.filmIndex = filmIndex;
+      slot.primed = false;
+      slot.priming = true;
+      slot.player?.mute();
+      slot.player?.loadVideoById(filmOptions(playlist[filmIndex]));
     },
     [playlist],
   );
 
-  const mute = useCallback(() => {
-    playerRef.current?.mute();
-    mutedRef.current = true;
-    setMuted(true);
-  }, []);
+  /**
+   * Hands over to the next film. The background player already has it buffered on its first
+   * frame, so it starts at once and cross-fades in, with no gap or loading pause.
+   */
+  const switchToNext = useCallback(() => {
+    if (switchingRef.current) return;
+    const len = playlist.length;
+    const from = activeRef.current;
+    const fromSlot = slotsRef.current[from];
+    const nextIndex = (indexRef.current + 1) % len;
+
+    if (len === 1) {
+      fromSlot.player?.seekTo(playlist[0].start ?? 0, true);
+      fromSlot.player?.playVideo();
+      return;
+    }
+
+    const to = (1 - from) as 0 | 1;
+    const toSlot = slotsRef.current[to];
+    if (!toSlot.player || toSlot.filmIndex !== nextIndex) {
+      // The background player isn't ready (slow network): fall back to loading in place.
+      indexRef.current = nextIndex;
+      setCurrent(nextIndex);
+      fromSlot.player?.loadVideoById(filmOptions(playlist[nextIndex]));
+      return;
+    }
+
+    switchingRef.current = true;
+    toSlot.priming = false;
+    if (!mutedRef.current) {
+      toSlot.player.unMute();
+      toSlot.player.setVolume(100);
+    }
+    toSlot.player.playVideo();
+    fromSlot.player?.mute();
+    activeRef.current = to;
+    setActiveSlot(to);
+    indexRef.current = nextIndex;
+    setCurrent(nextIndex);
+
+    // After the cross-fade, the old player pauses and preloads the film after this one.
+    window.setTimeout(() => {
+      fromSlot.player?.pauseVideo();
+      prime(fromSlot, (nextIndex + 1) % len);
+      switchingRef.current = false;
+    }, CROSSFADE_MS + 100);
+  }, [playlist, prime]);
 
   // Autoplay unless motion or data use is unwelcome (see prefersStillImage).
   useEffect(() => {
@@ -222,7 +286,7 @@ export function HeroVideo({
     setEnabled(!prefersStillImage());
   }, []);
 
-  // Keep the player covering the hero at any size.
+  // Keep the players covering the hero at any size.
   useEffect(() => {
     const el = sectionRef.current;
     if (!el) return;
@@ -234,73 +298,100 @@ export function HeroVideo({
     return () => ro.disconnect();
   }, [focusX]);
 
-  // Create the player.
+  // Create the players: the first plays straight away; the second is created once the first is
+  // playing (so it doesn't compete for bandwidth at start-up) and preloads the next film.
   useEffect(() => {
-    if (!enabled || !mountRef.current) return;
+    if (!enabled || !mountA.current || !mountB.current) return;
     let cancelled = false;
-    const host = mountRef.current;
-    const mountEl = document.createElement("div");
-    host.appendChild(mountEl);
+    const hosts = [mountA.current, mountB.current];
+    const slots = slotsRef.current;
+
+    const create = (YT: YTNamespace, slotIndex: 0 | 1, filmIndex: number, background: boolean) => {
+      const slot = slots[slotIndex];
+      const mountEl = document.createElement("div");
+      hosts[slotIndex].appendChild(mountEl);
+      const film = playlist[filmIndex];
+      slot.filmIndex = filmIndex;
+      slot.priming = background;
+      slot.player = new YT.Player(mountEl, {
+        host: "https://www.youtube-nocookie.com",
+        videoId: film.id,
+        width: "100%",
+        height: "100%",
+        playerVars: {
+          autoplay: 1,
+          mute: 1,
+          controls: 0,
+          disablekb: 1,
+          fs: 0,
+          playsinline: 1,
+          rel: 0,
+          iv_load_policy: 3,
+          cc_load_policy: 0,
+          modestbranding: 1,
+          start: film.start ?? 0,
+          ...(film.end ? { end: film.end } : {}),
+        },
+        events: {
+          onApiChange: ({ target }) => hideCaptions(target),
+          onReady: ({ target }) => {
+            const iframe = target.getIframe?.();
+            if (iframe) {
+              iframe.title = title;
+              iframe.tabIndex = -1;
+            }
+            hideCaptions(target);
+            target.mute();
+            target.playVideo();
+            // Sound straight away if the browser will allow it (on-screen player only).
+            if (!background && navigator.userActivation?.hasBeenActive && !userMutedRef.current) unmute();
+          },
+          onStateChange: ({ target, data }) => {
+            const isActive = slotIndex === activeRef.current;
+
+            if (data === YT.PlayerState.PLAYING) {
+              hideCaptions(target);
+              if (!isActive && slot.priming) {
+                // Preload done: park the background player on the film's first frame.
+                target.pauseVideo();
+                target.seekTo(playlist[slot.filmIndex].start ?? 0, true);
+                slot.priming = false;
+                slot.primed = true;
+                return;
+              }
+              if (isActive) {
+                setPlaying(true);
+                if (!slots[1 - slotIndex].player && playlist.length > 1) {
+                  create(YT, (1 - slotIndex) as 0 | 1, (indexRef.current + 1) % playlist.length, true);
+                }
+              }
+            }
+            if (!isActive) return;
+
+            // Reaching a film's end (or its `end` time) hands over to the next film.
+            if (data === YT.PlayerState.ENDED) switchToNext();
+            if (data === YT.PlayerState.PAUSED && !switchingRef.current) {
+              setPlaying(false);
+              // A pause we didn't ask for while unmuted means the browser blocked sound:
+              // fall back to muted playback until the visitor interacts.
+              if (!userPausedRef.current && !autoPausedRef.current && !mutedRef.current) {
+                target.mute();
+                mutedRef.current = true;
+                setMuted(true);
+                target.playVideo();
+              }
+            }
+          },
+        },
+      });
+    };
 
     const cancelIdle = whenIdle(() => {
       loadYouTubeApi()
         .then((YT) => {
           if (cancelled) return;
-          const film = playlist[indexRef.current];
-          playerRef.current = new YT.Player(mountEl, {
-            host: "https://www.youtube-nocookie.com",
-            videoId: film.id,
-            width: "100%",
-            height: "100%",
-            playerVars: {
-              autoplay: 1,
-              mute: 1,
-              controls: 0,
-              disablekb: 1,
-              fs: 0,
-              playsinline: 1,
-              rel: 0,
-              iv_load_policy: 3,
-              cc_load_policy: 0,
-              modestbranding: 1,
-              start: film.start ?? 0,
-              ...(film.end ? { end: film.end } : {}),
-            },
-            events: {
-              onApiChange: ({ target }) => hideCaptions(target),
-              onReady: ({ target }) => {
-                const iframe = target.getIframe?.();
-                if (iframe) {
-                  iframe.title = title;
-                  iframe.tabIndex = -1;
-                }
-                hideCaptions(target);
-                target.mute();
-                target.playVideo();
-                // Sound straight away if the browser will allow it.
-                if (navigator.userActivation?.hasBeenActive && !userMutedRef.current) unmute();
-              },
-              onStateChange: ({ target, data }) => {
-                if (data === YT.PlayerState.PLAYING) {
-                  setPlaying(true);
-                  hideCaptions(target);
-                }
-                // Reaching a film's end (or its `end` time) moves on to the next film.
-                if (data === YT.PlayerState.ENDED) advance(target);
-                if (data === YT.PlayerState.PAUSED) {
-                  setPlaying(false);
-                  // A pause we didn't ask for while unmuted means the browser blocked sound:
-                  // fall back to muted playback until the visitor interacts.
-                  if (!userPausedRef.current && !autoPausedRef.current && !mutedRef.current) {
-                    target.mute();
-                    mutedRef.current = true;
-                    setMuted(true);
-                    target.playVideo();
-                  }
-                }
-              },
-            },
-          });
+          ytRef.current = YT;
+          create(YT, activeRef.current, indexRef.current, false);
         })
         .catch(() => {
           // Keep the poster image if YouTube can't load.
@@ -310,30 +401,34 @@ export function HeroVideo({
     return () => {
       cancelled = true;
       cancelIdle();
-      playerRef.current?.destroy();
-      playerRef.current = null;
-      host.replaceChildren();
+      for (const slot of slots) {
+        slot.player?.destroy();
+        Object.assign(slot, emptySlot());
+      }
+      hosts.forEach((h) => h.replaceChildren());
     };
-  }, [enabled, playlist, title, unmute, advance]);
+  }, [enabled, playlist, title, unmute, switchToNext]);
 
-  // Backstop for `end` times: if the player plays past a film's end (it doesn't always stop
-  // exactly), move on as soon as the position passes it.
+  // Start the hand-over just before the on-screen film reaches its end (or its `end` time), so
+  // the next film is already moving when this one stops.
   useEffect(() => {
     if (!playing) return;
     const timer = window.setInterval(() => {
-      const player = playerRef.current;
-      const end = playlist[indexRef.current]?.end;
-      if (player && end && player.getCurrentTime() >= end - 0.25) advance(player);
-    }, 500);
+      const player = activePlayer();
+      if (!player || switchingRef.current) return;
+      const film = playlist[indexRef.current];
+      const end = film?.end ?? player.getDuration?.();
+      if (end && player.getCurrentTime() >= end - HANDOVER_LEAD_S) switchToNext();
+    }, 200);
     return () => window.clearInterval(timer);
-  }, [playing, playlist, advance]);
+  }, [playing, playlist, switchToNext]);
 
   // Turn sound on with the visitor's first interaction anywhere on the page.
   useEffect(() => {
     if (!enabled || !muted) return;
     const onInteract = (e: Event) => {
       if ((e.target as Element | null)?.closest?.("[data-hero-controls]")) return;
-      if (userMutedRef.current || !playerRef.current) return;
+      if (userMutedRef.current || !slotsRef.current[activeRef.current].player) return;
       unmute();
     };
     // Phones grant media permission on a completed tap (touchend/click), not on touch start.
@@ -347,7 +442,7 @@ export function HeroVideo({
   // follow the visitor, and phones save data and battery. Resumes when it's visible again.
   useEffect(() => {
     const sync = () => {
-      const player = playerRef.current;
+      const player = slotsRef.current[activeRef.current].player;
       if (!player || userPausedRef.current) return;
       const visible = inViewRef.current && document.visibilityState !== "hidden";
       if (visible && autoPausedRef.current) {
@@ -399,12 +494,14 @@ export function HeroVideo({
     setCurrent(index);
     userPausedRef.current = false;
     autoPausedRef.current = false;
-    const player = playerRef.current;
     if (!enabled) {
       setEnabled(true);
       return;
     }
-    player?.loadVideoById(filmOptions(playlist[index]));
+    activePlayer()?.loadVideoById(filmOptions(playlist[index]));
+    // Re-aim the background player at the film after the chosen one.
+    const background = slotsRef.current[1 - activeRef.current];
+    if (background.player && playlist.length > 1) prime(background, (index + 1) % playlist.length);
   }
 
   function togglePlay() {
@@ -412,7 +509,7 @@ export function HeroVideo({
       setEnabled(true);
       return;
     }
-    const player = playerRef.current;
+    const player = activePlayer();
     if (!player) return;
     autoPausedRef.current = false;
     if (playing) {
@@ -445,8 +542,20 @@ export function HeroVideo({
             className={`absolute transition-opacity duration-1000 [&_iframe]:pointer-events-none ${playing ? "opacity-100" : "opacity-0"}`}
             style={box ? { width: box.width, height: box.height, left: box.left, top: box.top } : { inset: 0 }}
           >
-            {/* No React children: YouTube swaps the element it gets for its iframe. */}
-            <div ref={mountRef} data-testid="hero-player" className="h-full w-full" />
+            {/* Two stacked players; the active one is shown. No React children inside: YouTube
+                swaps the element it gets for its iframe. */}
+            <div
+              ref={mountA}
+              data-testid="hero-player-0"
+              className={`absolute inset-0 transition-opacity ease-in-out ${activeSlot === 0 ? "opacity-100" : "opacity-0"}`}
+              style={{ transitionDuration: `${CROSSFADE_MS}ms` }}
+            />
+            <div
+              ref={mountB}
+              data-testid="hero-player-1"
+              className={`absolute inset-0 transition-opacity ease-in-out ${activeSlot === 1 ? "opacity-100" : "opacity-0"}`}
+              style={{ transitionDuration: `${CROSSFADE_MS}ms` }}
+            />
           </div>
         )}
       </div>

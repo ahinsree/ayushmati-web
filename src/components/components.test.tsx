@@ -12,23 +12,23 @@ vi.mock("next/image", () => ({
   default: ({ fill, priority, ...props }: Record<string, unknown>) => <img alt="" {...props} />,
 }));
 
-// Minimal stand-in for the YouTube IFrame Player API.
+// Minimal stand-in for the YouTube IFrame Player API. Every instance is recorded, since the hero
+// stacks two players (on-screen + preloading the next film).
+type FakeEvents = {
+  onReady: (e: { target: FakePlayer }) => void;
+  onStateChange: (e: { target: FakePlayer; data: number }) => void;
+  onApiChange: (e: { target: FakePlayer }) => void;
+};
 class FakePlayer {
-  static last: FakePlayer | undefined;
+  static all: FakePlayer[] = [];
   calls: string[] = [];
+  time = 0;
+  duration = 0;
   constructor(
     public el: HTMLElement,
-    public opts: {
-      videoId: string;
-      playerVars: Record<string, string | number>;
-      events: {
-        onReady: (e: { target: FakePlayer }) => void;
-        onStateChange: (e: { target: FakePlayer; data: number }) => void;
-        onApiChange: (e: { target: FakePlayer }) => void;
-      };
-    },
+    public opts: { videoId: string; playerVars: Record<string, string | number>; events: FakeEvents },
   ) {
-    FakePlayer.last = this;
+    FakePlayer.all.push(this);
   }
   playVideo() { this.calls.push("play"); }
   pauseVideo() { this.calls.push("pause"); }
@@ -36,14 +36,17 @@ class FakePlayer {
   mute() { this.calls.push("mute"); }
   unMute() { this.calls.push("unMute"); }
   setVolume(v: number) { this.calls.push(`volume:${v}`); }
-  time = 0;
   getCurrentTime() { return this.time; }
+  getDuration() { return this.duration; }
   loadVideoById(o: { videoId: string; startSeconds?: number; endSeconds?: number }) {
     this.calls.push(`load:${o.videoId}@${o.startSeconds ?? 0}-${o.endSeconds ?? "end"}`);
   }
   unloadModule(m: string) { this.calls.push(`unload:${m}`); }
   setOption(m: string, o: string) { this.calls.push(`option:${m}.${o}`); }
   destroy() { this.calls.push("destroy"); }
+  // Test helpers: fire the player's events.
+  ready() { act(() => this.opts.events.onReady({ target: this })); }
+  state(data: number) { act(() => this.opts.events.onStateChange({ target: this, data })); }
 }
 const STATE = { ENDED: 0, PLAYING: 1, PAUSED: 2 };
 const FILMS = [
@@ -65,7 +68,7 @@ describe("coverBox", () => {
 
 describe("HeroVideo", () => {
   beforeEach(() => {
-    FakePlayer.last = undefined;
+    FakePlayer.all = [];
     vi.stubGlobal("YT", { Player: FakePlayer, PlayerState: STATE });
     // Run "when idle" work straight away.
     vi.stubGlobal("requestIdleCallback", (cb: () => void) => {
@@ -75,6 +78,7 @@ describe("HeroVideo", () => {
     vi.stubGlobal("cancelIdleCallback", () => {});
   });
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     Reflect.deleteProperty(navigator, "connection");
     Reflect.deleteProperty(document, "visibilityState");
@@ -93,175 +97,184 @@ describe("HeroVideo", () => {
     await act(async () => {});
   }
 
-  function ready() {
-    const p = FakePlayer.last!;
-    act(() => p.opts.events.onReady({ target: p }));
-    act(() => p.opts.events.onStateChange({ target: p, data: STATE.PLAYING }));
-    return p;
+  /** On-screen player ready and playing; returns it and the background player it then creates. */
+  function startPlayback() {
+    const main = FakePlayer.all[0];
+    main.ready();
+    main.state(STATE.PLAYING);
+    const next = FakePlayer.all[1];
+    return { main, next };
   }
 
-  it("autoplays the film muted from the intro point with YouTube chrome hidden", async () => {
+  /** Background player finishes preloading (YouTube reports it playing once, then we park it). */
+  function preload(next: FakePlayer) {
+    next.ready();
+    next.state(STATE.PLAYING);
+  }
+
+  const button = (name: RegExp) => screen.getByRole("button", { name });
+
+  it("autoplays the first film muted with YouTube chrome and subtitles off", async () => {
     stubReducedMotion(false);
     await renderHero();
     expect(screen.getByRole("heading", { name: "Headline" })).toBeInTheDocument();
-    const p = ready();
-    expect(p.opts.videoId).toBe("film-one");
-    expect(p.opts.playerVars).toMatchObject({ autoplay: 1, mute: 1, controls: 0, start: 9, end: 64, playsinline: 1, cc_load_policy: 0 });
-    expect(p.calls.filter((c) => c === "mute" || c === "play")).toEqual(["mute", "play"]);
-    expect(screen.getByRole("button", { name: /sound on/i })).toHaveAttribute("aria-pressed", "false");
+    const { main } = startPlayback();
+    expect(main.opts.videoId).toBe("film-one");
+    expect(main.opts.playerVars).toMatchObject({ autoplay: 1, mute: 1, controls: 0, start: 9, end: 64, playsinline: 1, cc_load_policy: 0 });
+    expect(main.calls.filter((c) => c === "mute" || c === "play")).toEqual(["mute", "play"]);
+    expect(main.calls).toEqual(expect.arrayContaining(["unload:captions", "unload:cc", "option:captions.track"]));
+    expect(button(/sound on/i)).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("turns sound on with the visitor's first interaction anywhere on the page", async () => {
+  it("preloads the next film in a second, hidden player parked on its first frame", async () => {
     stubReducedMotion(false);
     await renderHero();
-    const p = ready();
-    await userEvent.click(screen.getByRole("heading", { name: "Headline" }));
-    expect(p.calls).toContain("unMute");
-    expect(p.calls).toContain("volume:100");
-    expect(screen.getByRole("button", { name: /sound off/i })).toHaveAttribute("aria-pressed", "true");
+    const { next } = startPlayback();
+    expect(next).toBeDefined();
+    expect(next.opts.videoId).toBe("film-two");
+    expect(next.opts.playerVars).toMatchObject({ mute: 1, start: 0, end: 452 });
+    preload(next);
+    expect(next.calls.slice(-2)).toEqual(["pause", "seek:0"]);
+    expect(screen.getByTestId("hero-player-1")).toHaveClass("opacity-0");
+  });
+
+  it("hands over to the preloaded film just before the end, with no gap, and keeps looping", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"] });
+    stubReducedMotion(false);
+    await renderHero();
+    const { main, next } = startPlayback();
+    preload(next);
+
+    main.time = 30;
+    act(() => vi.advanceTimersByTime(400));
+    expect(next.calls.at(-1)).toBe("seek:0"); // nothing yet
+
+    main.time = 63.7; // within 0.4 s of film 1's end (64 s)
+    act(() => vi.advanceTimersByTime(250));
+    expect(next.calls.at(-1)).toBe("play"); // already buffered: starts immediately
+    expect(main.calls.at(-1)).toBe("mute");
+    expect(screen.getByTestId("hero-player-1")).toHaveClass("opacity-100");
+    expect(screen.getByTestId("hero-player-0")).toHaveClass("opacity-0");
+    expect(button(/art of healing/i)).toHaveAttribute("aria-pressed", "true");
+
+    // After the cross-fade the old player pauses and preloads the film after this one (film 1 again).
+    act(() => vi.advanceTimersByTime(700));
+    expect(main.calls.slice(-3)).toEqual(["pause", "mute", "load:film-one@9-64"]);
+    main.state(STATE.PLAYING);
+    expect(main.calls.slice(-2)).toEqual(["pause", "seek:9"]);
+
+    // Film 2 ends -> back to film 1 in the first player.
+    next.time = 451.7;
+    act(() => vi.advanceTimersByTime(250));
+    expect(main.calls.at(-1)).toBe("play");
+    expect(screen.getByTestId("hero-player-0")).toHaveClass("opacity-100");
+    expect(button(/ancient way of healing/i)).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("carries sound over to the next film when sound is on", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"] });
+    stubReducedMotion(false);
+    await renderHero();
+    const { main, next } = startPlayback();
+    preload(next);
+    fireEvent.click(button(/sound on/i));
+    expect(main.calls).toContain("unMute");
+
+    main.state(STATE.ENDED); // backstop: the end event alone also triggers the hand-over
+    expect(next.calls.slice(-3)).toEqual(["unMute", "volume:100", "play"]);
+    expect(main.calls.at(-1)).toBe("mute");
+  });
+
+  it("turns sound on with the first interaction, including a phone tap", async () => {
+    stubReducedMotion(false);
+    await renderHero();
+    const { main } = startPlayback();
+    fireEvent.touchEnd(screen.getByRole("heading", { name: "Headline" }));
+    expect(main.calls).toContain("unMute");
+    expect(button(/sound off/i)).toHaveAttribute("aria-pressed", "true");
   });
 
   it("lets the visitor mute, and then stays muted", async () => {
     stubReducedMotion(false);
     await renderHero();
-    const p = ready();
-    await userEvent.click(screen.getByRole("button", { name: /sound on/i }));
-    expect(p.calls.at(-1)).toBe("volume:100");
-    await userEvent.click(screen.getByRole("button", { name: /sound off/i }));
-    expect(p.calls.at(-1)).toBe("mute");
+    const { main } = startPlayback();
+    await userEvent.click(button(/sound on/i));
+    await userEvent.click(button(/sound off/i));
+    expect(main.calls.at(-1)).toBe("mute");
     await userEvent.click(screen.getByRole("heading", { name: "Headline" }));
-    expect(p.calls.at(-1)).toBe("mute");
+    expect(main.calls.at(-1)).toBe("mute");
   });
 
   it("falls back to muted playback if the browser blocks sound", async () => {
     stubReducedMotion(false);
     await renderHero();
-    const p = ready();
-    await userEvent.click(screen.getByRole("button", { name: /sound on/i }));
-    act(() => p.opts.events.onStateChange({ target: p, data: STATE.PAUSED }));
-    expect(p.calls.slice(-2)).toEqual(["mute", "play"]);
-    expect(screen.getByRole("button", { name: /sound on/i })).toBeInTheDocument();
+    const { main } = startPlayback();
+    await userEvent.click(button(/sound on/i));
+    main.state(STATE.PAUSED);
+    expect(main.calls.slice(-2)).toEqual(["mute", "play"]);
+    expect(button(/sound on/i)).toBeInTheDocument();
   });
 
-  it("plays the films in order, loops back to the first, and can be paused", async () => {
+  it("jumps to a chosen film and re-aims the preloading player at the one after it", async () => {
     stubReducedMotion(false);
     await renderHero();
-    const p = ready();
-    act(() => p.opts.events.onStateChange({ target: p, data: STATE.ENDED }));
-    expect(p.calls.at(-1)).toBe("load:film-two@0-452");
-    act(() => p.opts.events.onStateChange({ target: p, data: STATE.ENDED }));
-    expect(p.calls.at(-1)).toBe("load:film-one@9-64");
-    await userEvent.click(screen.getByRole("button", { name: /pause film/i }));
-    expect(p.calls.at(-1)).toBe("pause");
-  });
-
-  it("has a button for each film that jumps to it and shows which one is playing", async () => {
-    stubReducedMotion(false);
-    await renderHero();
-    const p = ready();
-    const one = screen.getByRole("button", { name: /ancient way of healing/i });
-    const two = screen.getByRole("button", { name: /art of healing/i });
-    expect(one).toHaveAttribute("aria-pressed", "true");
-
-    await userEvent.click(two);
-    expect(p.calls.at(-1)).toBe("load:film-two@0-452");
-    expect(two).toHaveAttribute("aria-pressed", "true");
-    expect(p.calls).not.toContain("unMute"); // choosing a film doesn't switch sound on by itself
-
-    act(() => p.opts.events.onStateChange({ target: p, data: STATE.ENDED }));
-    expect(p.calls.at(-1)).toBe("load:film-one@9-64"); // the sequence carries on from the chosen film
-    expect(one).toHaveAttribute("aria-pressed", "true");
-  });
-
-  it("starts the chosen film when it was showing the still image", async () => {
-    stubReducedMotion(true);
-    await renderHero();
-    await userEvent.click(screen.getByRole("button", { name: /art of healing/i }));
-    await act(async () => {});
-    expect(FakePlayer.last?.opts.videoId).toBe("film-two");
-    expect(FakePlayer.last?.opts.playerVars.start).toBe(0);
-  });
-
-  it("moves on when a film passes its end time, even if YouTube doesn't stop exactly", async () => {
-    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
-    try {
-      stubReducedMotion(false);
-      await renderHero();
-      const p = ready();
-      p.time = 30;
-      act(() => {
-        vi.advanceTimersByTime(600);
-      });
-      expect(p.calls.some((c) => c.startsWith("load:"))).toBe(false);
-      p.time = 63.9;
-      act(() => {
-        vi.advanceTimersByTime(600);
-      });
-      expect(p.calls.at(-1)).toBe("load:film-two@0-452");
-      expect(screen.getByRole("button", { name: /art of healing/i })).toHaveAttribute("aria-pressed", "true");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("keeps YouTube subtitles off", async () => {
-    stubReducedMotion(false);
-    await renderHero();
-    const p = ready();
-    expect(p.calls).toEqual(expect.arrayContaining(["unload:captions", "unload:cc", "option:captions.track"]));
-    p.calls = [];
-    act(() => p.opts.events.onApiChange({ target: p }));
-    act(() => p.opts.events.onStateChange({ target: p, data: STATE.PLAYING }));
-    expect(p.calls.filter((c) => c === "unload:captions")).toHaveLength(2);
-  });
-
-  it("shows the still image on Data Saver or slow connections until the visitor presses play", async () => {
-    stubReducedMotion(false);
-    Object.defineProperty(navigator, "connection", { value: { saveData: true }, configurable: true });
-    await renderHero();
-    expect(FakePlayer.last).toBeUndefined();
-    await userEvent.click(screen.getByRole("button", { name: /play film/i }));
-    await act(async () => {});
-    expect(FakePlayer.last).toBeDefined();
-  });
-
-  it("turns sound on after a tap on a phone (touchend)", async () => {
-    stubReducedMotion(false);
-    await renderHero();
-    const p = ready();
-    fireEvent.touchEnd(screen.getByRole("heading", { name: "Headline" }));
-    expect(p.calls).toContain("unMute");
+    const { main, next } = startPlayback();
+    preload(next);
+    await userEvent.click(button(/art of healing/i));
+    expect(main.calls.at(-1)).toBe("load:film-two@0-452");
+    expect(next.calls.at(-1)).toBe("load:film-one@9-64");
+    expect(button(/art of healing/i)).toHaveAttribute("aria-pressed", "true");
+    expect(main.calls).not.toContain("unMute"); // choosing a film doesn't switch sound on by itself
   });
 
   it("pauses while the tab is hidden without treating it as blocked sound, then resumes", async () => {
     stubReducedMotion(false);
     await renderHero();
-    const p = ready();
-    await userEvent.click(screen.getByRole("button", { name: /sound on/i }));
+    const { main } = startPlayback();
+    await userEvent.click(button(/sound on/i));
 
     Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
     act(() => {
       document.dispatchEvent(new Event("visibilitychange"));
     });
-    expect(p.calls.at(-1)).toBe("pause");
-    act(() => p.opts.events.onStateChange({ target: p, data: STATE.PAUSED }));
-    expect(p.calls.at(-1)).toBe("pause"); // not re-muted and restarted
-    expect(screen.getByRole("button", { name: /sound off/i })).toBeInTheDocument();
+    expect(main.calls.at(-1)).toBe("pause");
+    main.state(STATE.PAUSED);
+    expect(main.calls.at(-1)).toBe("pause"); // not re-muted and restarted
+    expect(button(/sound off/i)).toBeInTheDocument();
 
     Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
     act(() => {
       document.dispatchEvent(new Event("visibilitychange"));
     });
-    expect(p.calls.at(-1)).toBe("play");
+    expect(main.calls.at(-1)).toBe("play");
   });
 
-  it("waits for the visitor when reduced motion is preferred", async () => {
+  it("can be paused by the visitor", async () => {
+    stubReducedMotion(false);
+    await renderHero();
+    const { main } = startPlayback();
+    await userEvent.click(button(/pause film/i));
+    expect(main.calls.at(-1)).toBe("pause");
+  });
+
+  it("shows the still image on Data Saver until the visitor presses play", async () => {
+    stubReducedMotion(false);
+    Object.defineProperty(navigator, "connection", { value: { saveData: true }, configurable: true });
+    await renderHero();
+    expect(FakePlayer.all).toHaveLength(0);
+    await userEvent.click(button(/play film/i));
+    await act(async () => {});
+    expect(FakePlayer.all).toHaveLength(1);
+  });
+
+  it("starts the chosen film when reduced motion is preferred and the visitor picks one", async () => {
     stubReducedMotion(true);
     await renderHero();
-    expect(FakePlayer.last).toBeUndefined();
-    await userEvent.click(screen.getByRole("button", { name: /play film/i }));
+    expect(FakePlayer.all).toHaveLength(0);
+    await userEvent.click(button(/art of healing/i));
     await act(async () => {});
-    expect(FakePlayer.last).toBeDefined();
+    expect(FakePlayer.all[0].opts.videoId).toBe("film-two");
+    expect(FakePlayer.all[0].opts.playerVars.start).toBe(0);
   });
 });
 
